@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 from pathlib import Path
 from typing import Optional
 from .__init__ import __version__
@@ -22,6 +23,15 @@ app = typer.Typer(
 console = Console()
 
 
+def print_banner():
+    """Print the ResPredAI banner."""
+    banner_text = f"""
+    ResPredAI
+    Version: {__version__}
+    Antimicrobial Resistance predictions via AI models
+    """
+    console.print(Panel(banner_text, title="ResPredAI", border_style="cyan"))
+
 def print_config_info(config_handler: ConfigHandler):
     """Print configuration information in a nice table."""
     table = Table(title="Configuration Summary", show_header=True, header_style="bold magenta")
@@ -36,6 +46,7 @@ def print_config_info(config_handler: ConfigHandler):
     table.add_row("Random Seed", str(config_handler.seed))
     table.add_row("Parallel Jobs", str(config_handler.n_jobs))
     table.add_row("Output Folder", str(config_handler.out_folder))
+    table.add_row("Checkpoint Enabled", str(config_handler.checkpoint_enable))
     
     console.print(table)
 
@@ -67,6 +78,172 @@ def callback(
     pass
 
 
+class TrainingProgressCallback:
+    """Callback class to handle training progress updates."""
+    
+    def __init__(self, console: Console, quiet: bool = False):
+        self.console = console
+        self.quiet = quiet
+        self.progress = None
+        self.overall_task = None
+        self.model_task = None
+        self.target_task = None
+        self.fold_task = None
+        
+    def start(self, total_work: int):
+        """Start the progress tracking."""
+        if self.quiet:
+            return
+            
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=self.console
+        )
+        self.progress.start()
+        self.overall_task = self.progress.add_task(
+            "[cyan]Overall Progress", total=total_work
+        )
+    
+    def start_model(self, model_name: str, total_work: int):
+        """Start tracking a new model."""
+        if self.quiet or not self.progress:
+            return
+            
+        if self.model_task is not None:
+            self.progress.remove_task(self.model_task)
+        
+        self.model_task = self.progress.add_task(
+            f"[green]Model: {model_name}", total=total_work
+        )
+    
+    def start_target(self, target_name: str, total_folds: int, resumed_from: int = 0):
+        """Start tracking a new target."""
+        if self.quiet or not self.progress:
+            return
+            
+        if self.target_task is not None:
+            self.progress.remove_task(self.target_task)
+        
+        status = f"[yellow]Target: {target_name}"
+        if resumed_from > 0:
+            status += f" (resumed from fold {resumed_from + 1})"
+        
+        self.target_task = self.progress.add_task(status, total=total_folds, completed=resumed_from)
+    
+    def start_fold(self, fold_num: int, total_folds: int):
+        """Start tracking a new fold."""
+        if self.quiet or not self.progress:
+            return
+            
+        if self.fold_task is not None:
+            self.progress.remove_task(self.fold_task)
+        
+        self.fold_task = self.progress.add_task(
+            f"[blue]  Fold {fold_num}/{total_folds}: Training...", total=100
+        )
+    
+    def update_fold_status(self, status: str, progress: int = None):
+        """Update fold status."""
+        if self.quiet or not self.progress or self.fold_task is None:
+            return
+        
+        self.progress.update(self.fold_task, description=f"[blue]  {status}")
+        if progress is not None:
+            self.progress.update(self.fold_task, completed=progress)
+    
+    def complete_fold(self, fold_num: int, metrics: dict):
+        """Complete a fold and show metrics."""
+        if self.quiet or not self.progress:
+            return
+        
+        if self.fold_task is not None:
+            self.progress.remove_task(self.fold_task)
+            self.fold_task = None
+        
+        # Advance all progress levels
+        if self.target_task is not None:
+            self.progress.advance(self.target_task)
+        if self.model_task is not None:
+            self.progress.advance(self.model_task)
+        if self.overall_task is not None:
+            self.progress.advance(self.overall_task)
+        
+        # Print fold metrics
+        metrics_str = f"Fold {fold_num}: "
+        metrics_str += f"F1={metrics.get('F1 (weighted)', 0):.3f}, "
+        metrics_str += f"MCC={metrics.get('MCC', 0):.3f}, "
+        metrics_str += f"AUROC={metrics.get('AUROC', 0):.3f}"
+        self.console.print(f"    [dim]{metrics_str}[/dim]")
+    
+    def complete_target(self, target_name: str, summary_metrics: dict):
+        """Complete a target and show summary."""
+        if self.quiet or not self.progress:
+            return
+        
+        if self.target_task is not None:
+            self.progress.remove_task(self.target_task)
+            self.target_task = None
+        
+        # Print target summary
+        self.console.print(f"\n  [bold green]✓[/bold green] Completed {target_name}")
+        summary_str = "    "
+        summary_str += f"F1={summary_metrics.get('F1 (weighted)', 0):.3f}±{summary_metrics.get('F1_std', 0):.3f}, "
+        summary_str += f"MCC={summary_metrics.get('MCC', 0):.3f}±{summary_metrics.get('MCC_std', 0):.3f}, "
+        summary_str += f"AUROC={summary_metrics.get('AUROC', 0):.3f}±{summary_metrics.get('AUROC_std', 0):.3f}"
+        self.console.print(f"[cyan]{summary_str}[/cyan]\n")
+    
+    def complete_model(self, model_name: str):
+        """Complete a model."""
+        if self.quiet or not self.progress:
+            return
+        
+        if self.model_task is not None:
+            self.progress.remove_task(self.model_task)
+            self.model_task = None
+        
+        self.console.print(f"\n[bold green]✓ Completed model: {model_name}[/bold green]\n\n")
+    
+    def skip_target(self, target_name: str, num_folds: int, reason: str = "checkpoint"):
+        """Skip a target (loaded from checkpoint)."""
+        if self.quiet or not self.progress:
+            return
+        
+        # Advance model and overall progress by the number of folds that were skipped
+        if self.model_task is not None:
+            self.progress.advance(self.model_task, advance=num_folds)
+        if self.overall_task is not None:
+            self.progress.advance(self.overall_task, advance=num_folds)
+        
+        self.console.print(f"  [dim]⊙ Skipped {target_name} (loaded from {reason})[/dim]")
+    
+    def skip_model(self, model_name: str, total_work_skipped: int, reason: str = "error"):
+        """Skip a model (failed to initialize)."""
+        if self.quiet or not self.progress:
+            return
+        
+        # Remove model task if it exists
+        if self.model_task is not None:
+            self.progress.remove_task(self.model_task)
+            self.model_task = None
+        
+        # Advance overall progress by all the work that would have been done
+        if self.overall_task is not None:
+            self.progress.advance(self.overall_task, advance=total_work_skipped)
+        
+        self.console.print(f"[dim]⊙ Skipped model: {model_name} ({reason})[/dim]")
+    
+    def stop(self):
+        """Stop the progress tracking."""
+        if self.quiet or not self.progress:
+            return
+        
+        self.progress.stop()
+
+
 @app.command()
 def run(
     config: Path = typer.Option(
@@ -92,6 +269,7 @@ def run(
     Example:
         respredai run --config my_config.ini
     """
+    print_banner()
 
     try:
         # Load configuration
@@ -114,12 +292,16 @@ def run(
         # Create output directory
         Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
         
+        # Create progress callback
+        progress_callback = TrainingProgressCallback(console, quiet)
+        
         # Run pipeline
         console.print("\n[bold cyan]Starting model training pipeline...[/bold cyan]\n")
         perform_pipeline(
             datasetter=datasetter,
             models=config_handler.models,
-            config_handler=config_handler
+            config_handler=config_handler,
+            progress_callback=progress_callback
         )
         
         # Success message
@@ -207,6 +389,10 @@ n_jobs = -1
 
 [Output]
 out_folder = ./output/
+
+[Checkpoint]
+enable = true
+compression = 3
 """
     
     try:

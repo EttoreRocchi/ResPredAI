@@ -152,20 +152,26 @@ def get_checkpoint_path(
 
 
 def save_checkpoint(
-    model,
+    fold_models: list,
+    fold_transformers: list,
     metrics: dict,
+    completed_folds: int,
     checkpoint_path: Path,
     compression: int = 3
 ):
     """
-    Save model checkpoint with metrics.
+    Save model checkpoint with all fold models and metrics.
     
     Parameters
     ----------
-    model : estimator
-        Trained model to save
+    fold_models : list
+        List of trained models (one per completed fold)
+    fold_transformers : list
+        List of fitted transformers (one per completed fold)
     metrics : dict
         Dictionary containing all metrics for this model-target
+    completed_folds : int
+        Number of completed folds
     checkpoint_path : Path
         Path to save the checkpoint
     compression : int
@@ -174,8 +180,10 @@ def save_checkpoint(
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     
     checkpoint_data = {
-        'model': model,
+        'fold_models': fold_models,
+        'fold_transformers': fold_transformers,
         'metrics': metrics,
+        'completed_folds': completed_folds,
         'timestamp': pd.Timestamp.now().isoformat()
     }
     
@@ -194,7 +202,7 @@ def load_checkpoint(checkpoint_path: Path) -> dict:
     Returns
     -------
     dict
-        Dictionary with 'model' and 'metrics' keys, or None if file doesn't exist
+        Dictionary with checkpoint data, or None if file doesn't exist
     """
     if not checkpoint_path.exists():
         return None
@@ -211,6 +219,7 @@ def perform_pipeline(
     datasetter: DataSetter,
     models: list[str],
     config_handler: ConfigHandler,
+    progress_callback=None
 ):
     """
     Execute the machine learning pipeline with nested cross-validation.
@@ -223,6 +232,8 @@ def perform_pipeline(
         List of model names to train
     config_handler : ConfigHandler
         Configuration handler with pipeline parameters
+    progress_callback : TrainingProgressCallback, optional
+        Callback object for progress updates
     """
 
     X, Y = datasetter.X, datasetter.Y
@@ -231,47 +242,53 @@ def perform_pipeline(
             f"Data dimension: {X.shape}"
         )
 
-    # One-hot encode categorical features
-    ohe = ColumnTransformer(
+    # List of categorical columns (non-continuous)
+    categorical_cols = [
+        col for col in X.columns
+        if col not in datasetter.continuous_features
+    ]
+
+    # One-hot encoding of categorical features
+    ohe_transformer = ColumnTransformer(
         transformers=[
             (
                 "ohe",
-                OneHotEncoder(drop="if_binary", sparse_output=False),
-                X.columns.difference(datasetter.continuous_features, sort=False)
+                OneHotEncoder(
+                    drop=None,
+                    sparse_output=False,
+                    handle_unknown="ignore"
+                ),
+                categorical_cols
             )
         ],
         remainder="passthrough",
         verbose_feature_names_out=False
     ).set_output(transform="pandas")
+
+    # Apply one-hot encoding
+    X = ohe_transformer.fit_transform(X)
     
-    X = ohe.fit_transform(X)
     if config_handler.verbosity:
         config_handler.logger.info(
-            f"Data dimension after encoding of categorical variables: {X.shape}"
+            f"After preprocessing, data dimension: {X.shape}. "
+            f"Training on {len(models)} models: {models}."
         )
 
-    # Check TabPFN constraints
-    for model in models:
-        if model == "TabPFN":
-            if X.shape[0] > 1000:
-                warnings.warn(
-                    f"TabPFN has a limit of 1000 samples. Current dataset has {X.shape[0]} samples. "
-                    "TabPFN will use a subset or may fail.",
-                    UserWarning
-                )
-            if X.shape[1] > 100:
-                warnings.warn(
-                    f"TabPFN has a limit of 100 features. Current dataset has {X.shape[1]} features. "
-                    "TabPFN may fail or perform suboptimally.",
-                    UserWarning
-                )
+    # Start overall progress
+    if progress_callback:
+        total_work = len(models) * len(Y.columns) * config_handler.outer_folds
+        progress_callback.start(total_work=total_work)
 
     for model in models:
         if config_handler.verbosity:
-            config_handler.logger.info(
-                f"Starting analyses with model: {model}."
-            )
+            config_handler.logger.info(f"Starting model: {model}")
+        
+        # Start model progress
+        if progress_callback:
+            total_work_for_model = len(Y.columns) * config_handler.outer_folds
+            progress_callback.start_model(model, total_work=total_work_for_model)
 
+        # Initialize pipeline
         try:
             transformer, grid = get_pipeline(
                 model_name=model,
@@ -286,6 +303,9 @@ def perform_pipeline(
                     f"Failed to initialize model {model}: {str(e)}"
                 )
             warnings.warn(f"Skipping model {model} due to initialization error: {str(e)}")
+            if progress_callback:
+                total_work_skipped = len(Y.columns) * config_handler.outer_folds
+                progress_callback.skip_model(model, total_work_skipped, "initialization error")
             continue
 
         outer_cv = StratifiedKFold(
@@ -305,41 +325,84 @@ def perform_pipeline(
                 target
             )
             
+            # Try to load checkpoint
+            checkpoint_data = None
+            start_fold = 0
+            fold_models = []
+            fold_transformers = []
+            
             if config_handler.checkpoint_enable and checkpoint_path.exists():
                 checkpoint_data = load_checkpoint(checkpoint_path)
                 if checkpoint_data is not None:
-                    if config_handler.verbosity:
-                        config_handler.logger.info(
-                            f"Loading checkpoint for {model} - {target} from {checkpoint_path}"
-                        )
+                    completed_folds = checkpoint_data.get('completed_folds', 0)
                     
-                    # Restore metrics from checkpoint
-                    all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
-                    f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
-                    mccs[target] = checkpoint_data['metrics'].get('mccs', [])
-                    cms[target] = checkpoint_data['metrics'].get('cms', [])
-                    aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
-                    
-                    if config_handler.verbosity:
-                        config_handler.logger.info(
-                            f"Checkpoint loaded for {model} - {target}. Skipping training."
-                        )
-                    continue
+                    # Check if all folds are completed
+                    if completed_folds >= config_handler.outer_folds:
+                        if config_handler.verbosity:
+                            config_handler.logger.info(
+                                f"All folds completed for {model} - {target}. Loading from checkpoint."
+                            )
+                        
+                        # Restore metrics from checkpoint
+                        all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
+                        f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
+                        mccs[target] = checkpoint_data['metrics'].get('mccs', [])
+                        cms[target] = checkpoint_data['metrics'].get('cms', [])
+                        aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
+                        
+                        if progress_callback:
+                            progress_callback.skip_target(target, config_handler.outer_folds, "checkpoint")
+                        
+                        continue
+                    else:
+                        # Resume from last completed fold
+                        start_fold = completed_folds
+                        fold_models = checkpoint_data.get('fold_models', [])
+                        fold_transformers = checkpoint_data.get('fold_transformers', [])
+                        
+                        # Restore partial metrics
+                        all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
+                        f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
+                        mccs[target] = checkpoint_data['metrics'].get('mccs', [])
+                        cms[target] = checkpoint_data['metrics'].get('cms', [])
+                        aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
+                        
+                        if config_handler.verbosity:
+                            config_handler.logger.info(
+                                f"Resuming {model} - {target} from fold {start_fold + 1}"
+                            )
             
-            # Initialize metrics storage
-            f1scores[target] = []
-            mccs[target] = []
-            cms[target] = []
-            aurocs[target] = []
-            all_metrics[target] = []  # List of metric dictionaries per fold
+            # Initialize metrics storage if starting fresh
+            if start_fold == 0:
+                f1scores[target] = []
+                mccs[target] = []
+                cms[target] = []
+                aurocs[target] = []
+                all_metrics[target] = []
 
             y = Y[target]
             if config_handler.verbosity:
                 config_handler.logger.info(
-                    f"Starting training for target: {target}."
+                    f"Starting training for target: {target} (from fold {start_fold + 1})."
+                )
+            
+            # Start target progress
+            if progress_callback:
+                progress_callback.start_target(
+                    target,
+                    total_folds=config_handler.outer_folds,
+                    resumed_from=start_fold
                 )
             
             for i, (train_set, test_set) in enumerate(outer_cv.split(X, y)):
+                # Skip already completed folds
+                if i < start_fold:
+                    continue
+                
+                # Start fold progress
+                if progress_callback:
+                    progress_callback.start_fold(i + 1, config_handler.outer_folds)
+                
                 if config_handler.verbosity == 2:
                     config_handler.logger.info(
                         f"Starting iteration: {i+1}."
@@ -352,16 +415,8 @@ def perform_pipeline(
                 X_train_scaled = transformer.fit_transform(X_train)
                 X_test_scaled = transformer.transform(X_test)
 
-                # Handle TabPFN sample limit
-                if model == "TabPFN" and X_train_scaled.shape[0] > 1000:
-                    # Randomly sample 1000 training samples
-                    sample_idx = np.random.RandomState(config_handler.seed + i).choice(
-                        X_train_scaled.shape[0], 1000, replace=False
-                    )
-                    X_train_scaled = X_train_scaled.iloc[sample_idx]
-                    y_train = y_train.iloc[sample_idx]
-
                 try:
+                    
                     grid.fit(X=X_train_scaled, y=y_train)
                     
                     if config_handler.verbosity == 2:
@@ -401,6 +456,15 @@ def perform_pipeline(
                             labels=[0, 1]
                         )
                     )
+                    
+                    # Store the best model and transformer for this fold
+                    fold_models.append(best_classifier)
+                    fold_transformers.append(transformer)
+                    
+                    # Update progress for successful fold
+                    if progress_callback:
+                        progress_callback.complete_fold(i + 1, fold_metrics)
+                    
                 except Exception as e:
                     if config_handler.verbosity:
                         config_handler.logger.error(
@@ -424,40 +488,52 @@ def perform_pipeline(
                     mccs[target].append(np.nan)
                     aurocs[target].append(np.nan)
                     cms[target].append(np.full((2, 2), np.nan))
+                    fold_models.append(None)
+                    fold_transformers.append(None)
+                    
+                    if progress_callback:
+                        progress_callback.complete_fold(i + 1, nan_metrics)
+                
+                # Save checkpoint after each fold if enabled
+                if config_handler.checkpoint_enable:
+                    target_metrics = {
+                        'all_metrics': all_metrics[target],
+                        'f1scores': f1scores[target],
+                        'mccs': mccs[target],
+                        'cms': cms[target],
+                        'aurocs': aurocs[target]
+                    }
+                    
+                    save_checkpoint(
+                        fold_models=fold_models,
+                        fold_transformers=fold_transformers,
+                        metrics=target_metrics,
+                        completed_folds=i + 1,
+                        checkpoint_path=checkpoint_path,
+                        compression=config_handler.checkpoint_compression
+                    )
+                    
+                    if config_handler.verbosity == 2:
+                        config_handler.logger.info(
+                            f"Saved checkpoint after fold {i+1} for {model} - {target}"
+                        )
             
             if config_handler.verbosity:
                 config_handler.logger.info(
                     f"Completed training for target {target} with model {model}."
                 )
             
-            # Save checkpoint if enabled
-            if config_handler.checkpoint_enable:
-                checkpoint_path = get_checkpoint_path(
-                    config_handler.out_folder,
-                    model,
-                    target
-                )
-                
-                # Save metrics for this target
-                target_metrics = {
-                    'all_metrics': all_metrics[target],
-                    'f1scores': f1scores[target],
-                    'mccs': mccs[target],
-                    'cms': cms[target],
-                    'aurocs': aurocs[target]
+            # Calculate summary metrics for progress callback
+            if progress_callback:
+                summary_metrics = {
+                    'F1 (weighted)': np.nanmean(f1scores[target]),
+                    'F1_std': np.nanstd(f1scores[target]),
+                    'MCC': np.nanmean(mccs[target]),
+                    'MCC_std': np.nanstd(mccs[target]),
+                    'AUROC': np.nanmean(aurocs[target]),
+                    'AUROC_std': np.nanstd(aurocs[target])
                 }
-                
-                save_checkpoint(
-                    model=grid.best_estimator_ if hasattr(grid, 'best_estimator_') else grid,
-                    metrics=target_metrics,
-                    checkpoint_path=checkpoint_path,
-                    compression=config_handler.checkpoint_compression
-                )
-                
-                if config_handler.verbosity:
-                    config_handler.logger.info(
-                        f"Saved checkpoint for {model} - {target} to {checkpoint_path}"
-                    )
+                progress_callback.complete_target(target, summary_metrics)
 
         # Calculate average confusion matrices
         average_cms = {
@@ -501,6 +577,14 @@ def perform_pipeline(
             config_handler.logger.info(
                 f"Completed model {model}."
             )
+        
+        # Complete model progress
+        if progress_callback:
+            progress_callback.complete_model(model)
+    
+    # Stop progress tracking
+    if progress_callback:
+        progress_callback.stop()
     
     if config_handler.verbosity:
         config_handler.logger.info(

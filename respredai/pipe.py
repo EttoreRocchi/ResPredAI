@@ -108,7 +108,6 @@ def get_pipeline(
             auto_class_weights="Balanced",
         )
     elif model_name == "TabPFN":
-        # TabPFN has limitations: max 1000 samples, max 100 features
         classifier = TabPFNClassifier().create_default_for_version(
             version=ModelVersion.V2,
             device="cuda" if torch.cuda.is_available() else "cpu",
