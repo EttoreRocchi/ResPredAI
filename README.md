@@ -63,6 +63,10 @@ log_basename = respredai.log
 [Resources]
 n_jobs = -1
 
+[Checkpoint]
+enable = true
+compression = 3
+
 [Output]
 out_folder = ./output/
 ```
