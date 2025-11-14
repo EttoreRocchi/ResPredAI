@@ -4,9 +4,9 @@ __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 
 import os
-
 from configparser import ConfigParser
 import logging
+from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
@@ -60,6 +60,15 @@ class ConfigHandler:
         
         # Section: Output
         self.out_folder = config.get("Output", "out_folder")
+        
+        # Section: Checkpoint
+        self.checkpoint_enable = config.getboolean("Checkpoint", "enable", fallback=False)
+        self.checkpoint_compression = config.getint("Checkpoint", "compression", fallback=3)
+        # Validate compression level (1-9)
+        if not 1 <= self.checkpoint_compression <= 9:
+            raise ValueError(
+                f"Checkpoint compression must be between 1 and 9, got {self.checkpoint_compression}"
+            )
     
     @staticmethod
     def _setup_logger(log_file: str) -> logging.Logger:

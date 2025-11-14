@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy import stats
+import joblib
 
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -122,6 +123,90 @@ def save_metrics_summary(
     return summary_df
 
 
+def get_checkpoint_path(
+    output_folder: str,
+    model: str,
+    target: str
+) -> Path:
+    """
+    Get the checkpoint file path for a model-target combination.
+    
+    Parameters
+    ----------
+    output_folder : str
+        Output folder path
+    model : str
+        Model name
+    target : str
+        Target name
+        
+    Returns
+    -------
+    Path
+        Path to the checkpoint file
+    """
+    model_safe = model.replace(" ", "_")
+    target_safe = target.replace(" ", "_")
+    checkpoint_dir = Path(output_folder) / "checkpoints"
+    return checkpoint_dir / f"{model_safe}_{target_safe}_checkpoint.joblib"
+
+
+def save_checkpoint(
+    model,
+    metrics: dict,
+    checkpoint_path: Path,
+    compression: int = 3
+):
+    """
+    Save model checkpoint with metrics.
+    
+    Parameters
+    ----------
+    model : estimator
+        Trained model to save
+    metrics : dict
+        Dictionary containing all metrics for this model-target
+    checkpoint_path : Path
+        Path to save the checkpoint
+    compression : int
+        Compression level (1-9)
+    """
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    checkpoint_data = {
+        'model': model,
+        'metrics': metrics,
+        'timestamp': pd.Timestamp.now().isoformat()
+    }
+    
+    joblib.dump(checkpoint_data, checkpoint_path, compress=compression)
+
+
+def load_checkpoint(checkpoint_path: Path) -> dict:
+    """
+    Load model checkpoint.
+    
+    Parameters
+    ----------
+    checkpoint_path : Path
+        Path to the checkpoint file
+        
+    Returns
+    -------
+    dict
+        Dictionary with 'model' and 'metrics' keys, or None if file doesn't exist
+    """
+    if not checkpoint_path.exists():
+        return None
+    
+    try:
+        checkpoint_data = joblib.load(checkpoint_path)
+        return checkpoint_data
+    except Exception as e:
+        warnings.warn(f"Failed to load checkpoint from {checkpoint_path}: {str(e)}")
+        return None
+
+
 def perform_pipeline(
     datasetter: DataSetter,
     models: list[str],
@@ -213,6 +298,35 @@ def perform_pipeline(
         all_metrics = {}  # Store comprehensive metrics
         
         for target in Y.columns:
+            # Check for existing checkpoint
+            checkpoint_path = get_checkpoint_path(
+                config_handler.out_folder,
+                model,
+                target
+            )
+            
+            if config_handler.checkpoint_enable and checkpoint_path.exists():
+                checkpoint_data = load_checkpoint(checkpoint_path)
+                if checkpoint_data is not None:
+                    if config_handler.verbosity:
+                        config_handler.logger.info(
+                            f"Loading checkpoint for {model} - {target} from {checkpoint_path}"
+                        )
+                    
+                    # Restore metrics from checkpoint
+                    all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
+                    f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
+                    mccs[target] = checkpoint_data['metrics'].get('mccs', [])
+                    cms[target] = checkpoint_data['metrics'].get('cms', [])
+                    aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
+                    
+                    if config_handler.verbosity:
+                        config_handler.logger.info(
+                            f"Checkpoint loaded for {model} - {target}. Skipping training."
+                        )
+                    continue
+            
+            # Initialize metrics storage
             f1scores[target] = []
             mccs[target] = []
             cms[target] = []
@@ -315,6 +429,35 @@ def perform_pipeline(
                 config_handler.logger.info(
                     f"Completed training for target {target} with model {model}."
                 )
+            
+            # Save checkpoint if enabled
+            if config_handler.checkpoint_enable:
+                checkpoint_path = get_checkpoint_path(
+                    config_handler.out_folder,
+                    model,
+                    target
+                )
+                
+                # Save metrics for this target
+                target_metrics = {
+                    'all_metrics': all_metrics[target],
+                    'f1scores': f1scores[target],
+                    'mccs': mccs[target],
+                    'cms': cms[target],
+                    'aurocs': aurocs[target]
+                }
+                
+                save_checkpoint(
+                    model=grid.best_estimator_ if hasattr(grid, 'best_estimator_') else grid,
+                    metrics=target_metrics,
+                    checkpoint_path=checkpoint_path,
+                    compression=config_handler.checkpoint_compression
+                )
+                
+                if config_handler.verbosity:
+                    config_handler.logger.info(
+                        f"Saved checkpoint for {model} - {target} to {checkpoint_path}"
+                    )
 
         # Calculate average confusion matrices
         average_cms = {
