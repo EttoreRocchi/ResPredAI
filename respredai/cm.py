@@ -1,42 +1,75 @@
+"""Confusion matrix visualization and saving."""
+
 __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 
 import math
 import os
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import Dict
 
-def save_cm( 
-    f1scores: dict[str, float],
-    mccs: dict[str, float],
-    cms: dict[str, np.ndarray],
-    aurocs: dict[str, np.ndarray],
+
+def save_cm(
+    f1scores: Dict[str, list],
+    mccs: Dict[str, list],
+    cms: Dict[str, pd.DataFrame],
+    aurocs: Dict[str, list],
     out_dir: str,
     model: str
-):
+) -> None:
+    """
+    Save confusion matrices with performance metrics as a figure.
+    
+    Parameters
+    ----------
+    f1scores : Dict[str, list]
+        F1 scores for each target
+    mccs : Dict[str, list]
+        Matthews Correlation Coefficients for each target
+    cms : Dict[str, pd.DataFrame]
+        Confusion matrices for each target
+    aurocs : Dict[str, list]
+        AUROC scores for each target
+    out_dir : str
+        Output directory path
+    model : str
+        Model name for the output filename
+    """
 
     targets = list(cms.keys())
     n_targets = len(targets)
 
+    # Calculate grid dimensions
     rows = int(math.ceil(math.sqrt(n_targets)))
     cols = int(math.ceil(n_targets / rows))
 
-    fig, axs = plt.subplots(nrows=rows, ncols=cols, 
-                            figsize=(6 * cols, 6 * rows), 
-                            dpi=300)
+    # Create figure with subplots
+    fig, axs = plt.subplots(
+        nrows=rows,
+        ncols=cols,
+        figsize=(6 * cols, 6 * rows),
+        dpi=300
+    )
     
+    # Handle different subplot configurations
     if isinstance(axs, np.ndarray):
         axs = axs.flatten()
     else:
         axs = [axs]
 
+    # Plot confusion matrix for each target
     for i, target in enumerate(targets):
         ax = axs[i]
+        
+        # Calculate mean and std of metrics
         f1_mean, f1_std = np.nanmean(f1scores[target]), np.nanstd(f1scores[target])
         mcc_mean, mcc_std = np.nanmean(mccs[target]), np.nanstd(mccs[target])
         auroc_mean, auroc_std = np.nanmean(aurocs[target]), np.nanstd(aurocs[target])
 
+        # Create title with metrics
         title_str = (
             f"\n{target}\n\n"
             f"F1 score = {f1_mean:.3f} ± {f1_std:.3f}\n"
@@ -46,6 +79,7 @@ def save_cm(
 
         ax.set_title(title_str, color="firebrick", fontsize=14)
 
+        # Create heatmap
         hm = sns.heatmap(
             cms[target],
             annot=True,
@@ -58,16 +92,22 @@ def save_cm(
             yticklabels=cms[target].index if hasattr(cms[target], 'index') else None,
             ax=ax
         )
+        
+        # Set labels
         ax.set_xlabel("Predicted class", fontsize=12)
         ax.set_ylabel("True class", fontsize=12)
         ax.tick_params(axis='both', labelsize=10)
 
+        # Adjust colorbar
         cbar = hm.collections[0].colorbar
         cbar.ax.tick_params(labelsize=10)
 
+    # Remove unused subplots
     for j in range(i + 1, rows * cols):
         fig.delaxes(axs[j])
 
+    # Save figure
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, f"Confusion_matrices_{model}.png"), dpi=300)
+    output_path = os.path.join(out_dir, f"Confusion_matrices_{model}.png")
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close(fig)

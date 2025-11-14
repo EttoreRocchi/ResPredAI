@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ResPredAI"
+description = "Antimicrobial Resistance predictions via AI models"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Ettore Rocchi", email = "ettore.rocchi3@unibo.it"},
+]
+maintainers = [
+    {name = "Ettore Rocchi", email = "ettore.rocchi3@unibo.it"},
+]
+keywords = [
+    "machine-learning",
+    "antimicrobial-resistance"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dynamic = ["version", "dependencies"]
+
+[project.scripts]
+respredai = "respredai.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "respredai.__version__"}
+dependencies = {file = ["requirements.txt"]}
+
+[project.urls]
+"Homepage" = "https://github.com/EttoreRocchi/ResPredAI"
+"Bug Reports" = "https://github.com/EttoreRocchi/ResPredAI/issues"
+"Source" = "https://github.com/EttoreRocchi/ResPredAI"
+"Documentation" = "https://github.com/EttoreRocchi/ResPredAI/blob/main/README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["respredai*"]
+exclude = ["docs*", "example*"]
