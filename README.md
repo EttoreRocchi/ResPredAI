@@ -2,65 +2,130 @@
 
 ## Antimicrobial **Res**istance **pre**dictions via **AI** models
 
-Implementation of the pipeline described in the work Bonazzetti, C., Rocchi, E., Toschi, A. _et al._ Artificial Intelligence model to predict resistances in Gram-negative bloodstream infections. _npj Digit. Med._ **8**, 319 (2025). https://doi.org/10.1038/s41746-025-01696-x
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-### Installation
+Implementation of the pipeline described in:
 
-Download the project by cloning the repository:
+> Bonazzetti, C., Rocchi, E., Toschi, A. _et al._ Artificial Intelligence model to predict resistances in Gram-negative bloodstream infections. _npj Digit. Med._ **8**, 319 (2025). https://doi.org/10.1038/s41746-025-01696-x
+
+## Installation
+
 ```bash
+# Clone the repository
 git clone https://github.com/EttoreRocchi/ResPredAI.git
 cd ResPredAI
-```
-Install the required packages:
-```bash
-pip install -r ./requirements.txt
-```
-To test the installation, simply run:
-```bash
-python main.py -c ./example/config_example.ini 
-```
-This will run the pipeline on a fictitious dataset. The results will be reported in `./out_run_example/`.
 
-## Usage
+# Install
+pip install .
+```
 
-To run the pipeline you may use this command:
+## Testing the Installation
+
+Test with the included example:
 
 ```bash
-python main.py -c <path/to/config.ini>
+respredai run --config example/config_example.ini
 ```
 
-where `<path/to/config.ini>` is the path to the configuration file, structured as below:
+This runs the pipeline on a synthetic dataset. Results will be in `./out_run_example/`.
+
+## Quick Start
+
+### 1. Create a configuration file
+
+```bash
+respredai create-config my_config.ini
+```
+
+### 2. Edit the configuration file
+
+Edit `my_config.ini` with your data paths and parameters:
+
 ```ini
 [Data]
-data_path = # path to data file
-targets = # list of targets in the DataFrame
-continuous_features = # list of continuous features in the DataFrame
+data_path = ./data/my_data.csv
+targets = Target1,Target2
+continuous_features = Feature1,Feature2,Feature3
 
 [Pipeline]
-models = # accepted models are: LR (for Logistic Regression), MLP (for Multi-Layer Perceptron) and XGB (for eXtreme Gradient Boosting classifier)
-outer_folds = # number of folds for outer cross-validation
-inner_folds = # number of folds for inner cross-validation
+models = LR,RF,XGB,CatBoost
+outer_folds = 5
+inner_folds = 3
 
 [Reproducibility]
-seed = # an integer for reproducibility
+seed = 42
 
 [Log]
-verbosity = # Verbosity level (possible values: 0, 1, 2):
-            # 0 = no log file will be created;
-            # 1 = the log file will record just the start and end times of model's training; 
-            # 2 = the log file will also record the start time of each iteration.
-log_basename = # name of the log file (if verbosity is not 0)
+verbosity = 1
+log_basename = respredai.log
 
 [Resources]
-n_jobs = # number of jobs to run in parallel 
+n_jobs = -1
 
 [Output]
-out_folder = # path to the folder in which the outputs will be saved
+out_folder = ./output/
 ```
 
-### Citation
+### 3. Run the pipeline
 
-```BibTex
+```bash
+respredai run --config my_config.ini
+```
+
+## CLI Commands
+
+### Run the pipeline
+
+```bash
+respredai run --config path/to/config.ini
+```
+
+### List available models
+
+```bash
+respredai list-models
+```
+
+### Create a template configuration file
+
+```bash
+respredai create-config output_path.ini
+```
+
+### Show information
+
+```bash
+respredai info
+```
+
+### Show version
+
+```bash
+respredai --version
+```
+
+## Output
+
+The pipeline generates:
+- **Confusion matrices**: PNG files with heatmaps showing model performance for each target
+- **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC) with mean, std, and 95% CI
+- **Log files**: Detailed execution logs (if verbosity > 0)
+
+### Output Structure
+```
+output_folder/
+├── Confusion_matrices_{model_name}.png     # Confusion matrices for all targets
+└── metrics/
+    └── {target_name}/
+        └── {model_name}_metrics_detailed.csv   # Comprehensive metrics CSV
+```
+
+## Citation
+
+If you use `ResPredAI` in your research, please cite:
+
+```bibtex
 @article{Bonazzetti2025,
   author = {Bonazzetti, Cecilia and Rocchi, Ettore and Toschi, Alice and Derus, Nicolas Riccardo and Sala, Claudia and Pascale, Renato and Rinaldi, Matteo and Campoli, Caterina and Pasquini, Zeno Adrien Igor and Tazza, Beatrice and Amicucci, Armando and Gatti, Milo and Ambretti, Simone and Viale, Pierluigi and Castellani, Gastone and Giannella, Maddalena},
   title = {Artificial Intelligence model to predict resistances in Gram-negative bloodstream infections},
@@ -73,5 +138,10 @@ out_folder = # path to the folder in which the outputs will be saved
 }
 ```
 
-### Funding
-This research was supported by EU funding within the NextGenerationEU-MUR PNRR Extended Partnership initiative on Emerging Infectious Diseases (Project no. PE00000007, INF-ACT)
+## Funding
+
+This research was supported by EU funding within the NextGenerationEU-MUR PNRR Extended Partnership initiative on Emerging Infectious Diseases (Project no. PE00000007, INF-ACT).
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
