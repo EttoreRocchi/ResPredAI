@@ -1,8 +1,5 @@
 """Pipeline creation for different machine learning models."""
 
-__author__ = "Ettore Rocchi"
-__email__ = "ettore.rocchi3@unibo.it"
-
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.ensemble import RandomForestClassifier

@@ -1,8 +1,5 @@
 """Parameter grids for hyperparameter tuning."""
 
-__author__ = "Ettore Rocchi"
-__email__ = "ettore.rocchi3@unibo.it"
-
 import numpy as np
 
 PARAM_GRID = {

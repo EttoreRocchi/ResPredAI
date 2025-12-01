@@ -1,9 +1,5 @@
 """Main pipeline execution for ResPredAI."""
 
-__author__ = "Ettore Rocchi"
-__email__ = "ettore.rocchi3@unibo.it"
-
-import os
 import warnings
 import numpy as np
 import pandas as pd
@@ -32,7 +28,7 @@ from .cm import save_cm
 def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
     """
     Calculate comprehensive classification metrics.
-    
+
     Parameters
     ----------
     y_true : np.ndarray
@@ -41,7 +37,7 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
         Predicted labels
     y_prob : np.ndarray
         Predicted probabilities (2D array)
-        
+
     Returns
     -------
     dict
@@ -64,7 +60,7 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
 def ci_halfwidth(std: float, n: int, confidence: float = 0.95) -> float:
     """
     Calculate confidence interval half-width.
-    
+
     Parameters
     ----------
     std : float
@@ -73,7 +69,7 @@ def ci_halfwidth(std: float, n: int, confidence: float = 0.95) -> float:
         Sample size (number of folds)
     confidence : float
         Confidence level (default: 0.95)
-        
+
     Returns
     -------
     float
@@ -92,7 +88,7 @@ def save_metrics_summary(
 ):
     """
     Save metrics summary with mean, std, and confidence intervals.
-    
+
     Parameters
     ----------
     metrics_dict : dict
@@ -108,7 +104,7 @@ def save_metrics_summary(
     mean = df_metrics.mean()
     std = df_metrics.std()
     ci = df_metrics.apply(lambda x: ci_halfwidth(x.std(), n_folds, confidence))
-    
+
     summary_df = pd.DataFrame({
         'Metric': df_metrics.columns,
         'Mean': mean.values,
@@ -116,21 +112,21 @@ def save_metrics_summary(
         f'CI_{int(confidence*100)}': ci.values,
         'Mean±CI': [f"{m:.3f} ± {c:.3f}" for m, c in zip(mean, ci)]
     })
-    
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(output_path, index=False)
-    
+
     return summary_df
 
 
-def get_checkpoint_path(
+def get_model_path(
     output_folder: str,
     model: str,
     target: str
 ) -> Path:
     """
-    Get the checkpoint file path for a model-target combination.
-    
+    Get the model file path for a model-target combination.
+
     Parameters
     ----------
     output_folder : str
@@ -139,29 +135,29 @@ def get_checkpoint_path(
         Model name
     target : str
         Target name
-        
+
     Returns
     -------
     Path
-        Path to the checkpoint file
+        Path to the model file
     """
     model_safe = model.replace(" ", "_")
     target_safe = target.replace(" ", "_")
-    checkpoint_dir = Path(output_folder) / "checkpoints"
-    return checkpoint_dir / f"{model_safe}_{target_safe}_checkpoint.joblib"
+    models_dir = Path(output_folder) / "models"
+    return models_dir / f"{model_safe}_{target_safe}_models.joblib"
 
 
-def save_checkpoint(
+def save_models(
     fold_models: list,
     fold_transformers: list,
     metrics: dict,
     completed_folds: int,
-    checkpoint_path: Path,
+    model_path: Path,
     compression: int = 3
 ):
     """
-    Save model checkpoint with all fold models and metrics.
-    
+    Save trained models with all fold models and metrics.
+
     Parameters
     ----------
     fold_models : list
@@ -172,46 +168,46 @@ def save_checkpoint(
         Dictionary containing all metrics for this model-target
     completed_folds : int
         Number of completed folds
-    checkpoint_path : Path
-        Path to save the checkpoint
+    model_path : Path
+        Path to save the model file
     compression : int
         Compression level (1-9)
     """
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    checkpoint_data = {
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+
+    model_data = {
         'fold_models': fold_models,
         'fold_transformers': fold_transformers,
         'metrics': metrics,
         'completed_folds': completed_folds,
         'timestamp': pd.Timestamp.now().isoformat()
     }
-    
-    joblib.dump(checkpoint_data, checkpoint_path, compress=compression)
+
+    joblib.dump(model_data, model_path, compress=compression)
 
 
-def load_checkpoint(checkpoint_path: Path) -> dict:
+def load_models(model_path: Path) -> dict:
     """
-    Load model checkpoint.
-    
+    Load trained models from file.
+
     Parameters
     ----------
-    checkpoint_path : Path
-        Path to the checkpoint file
-        
+    model_path : Path
+        Path to the model file
+
     Returns
     -------
     dict
-        Dictionary with checkpoint data, or None if file doesn't exist
+        Dictionary with model data, or None if file doesn't exist
     """
-    if not checkpoint_path.exists():
+    if not model_path.exists():
         return None
-    
+
     try:
-        checkpoint_data = joblib.load(checkpoint_path)
-        return checkpoint_data
+        model_data = joblib.load(model_path)
+        return model_data
     except Exception as e:
-        warnings.warn(f"Failed to load checkpoint from {checkpoint_path}: {str(e)}")
+        warnings.warn(f"Failed to load model from {model_path}: {str(e)}")
         return None
 
 
@@ -223,7 +219,7 @@ def perform_pipeline(
 ):
     """
     Execute the machine learning pipeline with nested cross-validation.
-    
+
     Parameters
     ----------
     datasetter : DataSetter
@@ -267,7 +263,7 @@ def perform_pipeline(
 
     # Apply one-hot encoding
     X = ohe_transformer.fit_transform(X)
-    
+
     if config_handler.verbosity:
         config_handler.logger.info(
             f"After preprocessing, data dimension: {X.shape}. "
@@ -282,7 +278,7 @@ def perform_pipeline(
     for model in models:
         if config_handler.verbosity:
             config_handler.logger.info(f"Starting model: {model}")
-        
+
         # Start model progress
         if progress_callback:
             total_work_for_model = len(Y.columns) * config_handler.outer_folds
@@ -316,62 +312,62 @@ def perform_pipeline(
 
         f1scores, mccs, cms, aurocs = {}, {}, {}, {}
         all_metrics = {}  # Store comprehensive metrics
-        
+
         for target in Y.columns:
-            # Check for existing checkpoint
-            checkpoint_path = get_checkpoint_path(
+            # Check for existing saved models
+            model_path = get_model_path(
                 config_handler.out_folder,
                 model,
                 target
             )
-            
-            # Try to load checkpoint
-            checkpoint_data = None
+
+            # Try to load saved models
+            model_data = None
             start_fold = 0
             fold_models = []
             fold_transformers = []
-            
-            if config_handler.checkpoint_enable and checkpoint_path.exists():
-                checkpoint_data = load_checkpoint(checkpoint_path)
-                if checkpoint_data is not None:
-                    completed_folds = checkpoint_data.get('completed_folds', 0)
-                    
+
+            if config_handler.save_models_enable and model_path.exists():
+                model_data = load_models(model_path)
+                if model_data is not None:
+                    completed_folds = model_data.get('completed_folds', 0)
+
                     # Check if all folds are completed
                     if completed_folds >= config_handler.outer_folds:
                         if config_handler.verbosity:
                             config_handler.logger.info(
-                                f"All folds completed for {model} - {target}. Loading from checkpoint."
+                                f"All folds completed for {model} - {target}. Loading from saved models."
                             )
-                        
-                        # Restore metrics from checkpoint
-                        all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
-                        f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
-                        mccs[target] = checkpoint_data['metrics'].get('mccs', [])
-                        cms[target] = checkpoint_data['metrics'].get('cms', [])
-                        aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
-                        
+
+                        # Restore metrics from saved models
+                        all_metrics[target] = model_data['metrics'].get('all_metrics', [])
+                        f1scores[target] = model_data['metrics'].get('f1scores', [])
+                        mccs[target] = model_data['metrics'].get('mccs', [])
+                        cms[target] = model_data['metrics'].get('cms', [])
+                        aurocs[target] = model_data['metrics'].get('aurocs', [])
+
                         if progress_callback:
-                            progress_callback.skip_target(target, config_handler.outer_folds, "checkpoint")
-                        
+                            progress_callback.skip_target(target, config_handler.outer_folds, "saved models")
+
                         continue
                     else:
                         # Resume from last completed fold
                         start_fold = completed_folds
-                        fold_models = checkpoint_data.get('fold_models', [])
-                        fold_transformers = checkpoint_data.get('fold_transformers', [])
-                        
+                        fold_models = model_data.get('fold_models', [])
+                        fold_transformers = model_data.get('fold_transformers', [])
+
                         # Restore partial metrics
-                        all_metrics[target] = checkpoint_data['metrics'].get('all_metrics', [])
-                        f1scores[target] = checkpoint_data['metrics'].get('f1scores', [])
-                        mccs[target] = checkpoint_data['metrics'].get('mccs', [])
-                        cms[target] = checkpoint_data['metrics'].get('cms', [])
-                        aurocs[target] = checkpoint_data['metrics'].get('aurocs', [])
-                        
+                        all_metrics[target] = model_data['metrics'].get('all_metrics', [])
+                        f1scores[target] = model_data['metrics'].get('f1scores', [])
+                        mccs[target] = model_data['metrics'].get('mccs', [])
+                        cms[target] = model_data['metrics'].get('cms', [])
+                        aurocs[target] = model_data['metrics'].get('aurocs', [])
+
                         if config_handler.verbosity:
                             config_handler.logger.info(
                                 f"Resuming {model} - {target} from fold {start_fold + 1}"
                             )
-            
+
             # Initialize metrics storage if starting fresh
             if start_fold == 0:
                 f1scores[target] = []
@@ -385,7 +381,7 @@ def perform_pipeline(
                 config_handler.logger.info(
                     f"Starting training for target: {target} (from fold {start_fold + 1})."
                 )
-            
+
             # Start target progress
             if progress_callback:
                 progress_callback.start_target(
@@ -393,21 +389,21 @@ def perform_pipeline(
                     total_folds=config_handler.outer_folds,
                     resumed_from=start_fold
                 )
-            
+
             for i, (train_set, test_set) in enumerate(outer_cv.split(X, y)):
                 # Skip already completed folds
                 if i < start_fold:
                     continue
-                
+
                 # Start fold progress
                 if progress_callback:
                     progress_callback.start_fold(i + 1, config_handler.outer_folds)
-                
+
                 if config_handler.verbosity == 2:
                     config_handler.logger.info(
                         f"Starting iteration: {i+1}."
                     )
-                
+
                 X_train, X_test = X.iloc[train_set], X.iloc[test_set]
                 y_train, y_test = y.iloc[train_set], y.iloc[test_set]
 
@@ -416,9 +412,9 @@ def perform_pipeline(
                 X_test_scaled = transformer.transform(X_test)
 
                 try:
-                    
+
                     grid.fit(X=X_train_scaled, y=y_train)
-                    
+
                     if config_handler.verbosity == 2:
                         config_handler.logger.info(
                             f"Model {model} trained for iteration: {i+1}."
@@ -426,7 +422,7 @@ def perform_pipeline(
 
                     best_classifier = grid.best_estimator_
                     y_pred = best_classifier.predict(X_test_scaled)
-                    
+
                     # Handle probability prediction
                     if hasattr(best_classifier, 'predict_proba'):
                         y_prob = best_classifier.predict_proba(X_test_scaled)
@@ -435,7 +431,7 @@ def perform_pipeline(
                         y_score = best_classifier.decision_function(X_test_scaled)
                         # Convert to 2D probability array
                         y_prob = np.column_stack([1 - y_score, y_score])
-                    
+
                     # Calculate comprehensive metrics
                     fold_metrics = metric_dict(
                         y_true=y_test.values,
@@ -443,7 +439,7 @@ def perform_pipeline(
                         y_prob=y_prob
                     )
                     all_metrics[target].append(fold_metrics)
-                    
+
                     # Store individual metrics for backwards compatibility
                     f1scores[target].append(fold_metrics["F1 (weighted)"])
                     mccs[target].append(fold_metrics["MCC"])
@@ -456,15 +452,15 @@ def perform_pipeline(
                             labels=[0, 1]
                         )
                     )
-                    
+
                     # Store the best model and transformer for this fold
                     fold_models.append(best_classifier)
                     fold_transformers.append(transformer)
-                    
+
                     # Update progress for successful fold
                     if progress_callback:
                         progress_callback.complete_fold(i + 1, fold_metrics)
-                    
+
                 except Exception as e:
                     if config_handler.verbosity:
                         config_handler.logger.error(
@@ -490,12 +486,12 @@ def perform_pipeline(
                     cms[target].append(np.full((2, 2), np.nan))
                     fold_models.append(None)
                     fold_transformers.append(None)
-                    
+
                     if progress_callback:
                         progress_callback.complete_fold(i + 1, nan_metrics)
-                
-                # Save checkpoint after each fold if enabled
-                if config_handler.checkpoint_enable:
+
+                # Save models after each fold if enabled
+                if config_handler.save_models_enable:
                     target_metrics = {
                         'all_metrics': all_metrics[target],
                         'f1scores': f1scores[target],
@@ -503,26 +499,26 @@ def perform_pipeline(
                         'cms': cms[target],
                         'aurocs': aurocs[target]
                     }
-                    
-                    save_checkpoint(
+
+                    save_models(
                         fold_models=fold_models,
                         fold_transformers=fold_transformers,
                         metrics=target_metrics,
                         completed_folds=i + 1,
-                        checkpoint_path=checkpoint_path,
-                        compression=config_handler.checkpoint_compression
+                        model_path=model_path,
+                        compression=config_handler.model_compression
                     )
-                    
+
                     if config_handler.verbosity == 2:
                         config_handler.logger.info(
-                            f"Saved checkpoint after fold {i+1} for {model} - {target}"
+                            f"Saved models after fold {i+1} for {model} - {target}"
                         )
-            
+
             if config_handler.verbosity:
                 config_handler.logger.info(
                     f"Completed training for target {target} with model {model}."
                 )
-            
+
             # Calculate summary metrics for progress callback
             if progress_callback:
                 summary_metrics = {
@@ -554,38 +550,41 @@ def perform_pipeline(
             out_dir=config_handler.out_folder,
             model=model.replace(" ", "_")
         )
-        
+
         # Save comprehensive metrics for each target
         model_safe_name = model.replace(" ", "_")
         for target in Y.columns:
             target_safe_name = target.replace(" ", "_")
-            metrics_output_path = Path(config_handler.out_folder) / "metrics" / target_safe_name / f"{model_safe_name}_metrics_detailed.csv"
-            
+            metrics_output_path = (
+                Path(config_handler.out_folder) / "metrics" / target_safe_name /
+                f"{model_safe_name}_metrics_detailed.csv"
+            )
+
             save_metrics_summary(
                 metrics_dict=all_metrics[target],
                 n_folds=config_handler.outer_folds,
                 output_path=metrics_output_path,
                 confidence=0.95
             )
-            
+
             if config_handler.verbosity:
                 config_handler.logger.info(
                     f"Saved detailed metrics for {model} - {target} to {metrics_output_path}"
                 )
-        
+
         if config_handler.verbosity:
             config_handler.logger.info(
                 f"Completed model {model}."
             )
-        
+
         # Complete model progress
         if progress_callback:
             progress_callback.complete_model(model)
-    
+
     # Stop progress tracking
     if progress_callback:
         progress_callback.stop()
-    
+
     if config_handler.verbosity:
         config_handler.logger.info(
             "Analysis completed."

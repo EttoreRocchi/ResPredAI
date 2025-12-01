@@ -1,12 +1,8 @@
 """Utility classes for configuration and data handling."""
 
-__author__ = "Ettore Rocchi"
-__email__ = "ettore.rocchi3@unibo.it"
-
 import os
 from configparser import ConfigParser
 import logging
-from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
@@ -18,7 +14,7 @@ class ConfigHandler:
     def __init__(self, config_path: str):
         """
         Initialize configuration handler.
-        
+
         Parameters
         ----------
         config_path : str
@@ -35,51 +31,51 @@ class ConfigHandler:
         """Parse and validate configuration file."""
         config = ConfigParser()
         config.read(self.config_path)
-        
+
         # Section: Data
         self.data_path = config.get("Data", "data_path")
         self.targets = [t.strip() for t in config.get("Data", "targets").split(",")]
         self.continuous_features = [
             f.strip() for f in config.get("Data", "continuous_features").split(",")
         ]
-        
+
         # Section: Pipeline
         self.models = [m.strip() for m in config.get("Pipeline", "models").split(",")]
         self.outer_folds = config.getint("Pipeline", "outer_folds")
         self.inner_folds = config.getint("Pipeline", "inner_folds")
-        
+
         # Section: Reproducibility
         self.seed = config.getint("Reproducibility", "seed")
-        
+
         # Section: Log
         self.verbosity = config.getint("Log", "verbosity")
         self.log_basename = config.get("Log", "log_basename")
-        
+
         # Section: Resources
         self.n_jobs = config.getint("Resources", "n_jobs")
-        
+
         # Section: Output
         self.out_folder = config.get("Output", "out_folder")
-        
-        # Section: Checkpoint
-        self.checkpoint_enable = config.getboolean("Checkpoint", "enable", fallback=False)
-        self.checkpoint_compression = config.getint("Checkpoint", "compression", fallback=3)
+
+        # Section: ModelSaving
+        self.save_models_enable = config.getboolean("ModelSaving", "enable", fallback=False)
+        self.model_compression = config.getint("ModelSaving", "compression", fallback=3)
         # Validate compression level (1-9)
-        if not 1 <= self.checkpoint_compression <= 9:
+        if not 1 <= self.model_compression <= 9:
             raise ValueError(
-                f"Checkpoint compression must be between 1 and 9, got {self.checkpoint_compression}"
+                f"Model compression must be between 1 and 9, got {self.model_compression}"
             )
-    
+
     @staticmethod
     def _setup_logger(log_file: str) -> logging.Logger:
         """
         Set up the logging system.
-        
+
         Parameters
         ----------
         log_file : str
             Path to the log file
-            
+
         Returns
         -------
         logging.Logger
@@ -105,7 +101,7 @@ class DataSetter:
     def __init__(self, config_handler: ConfigHandler):
         """
         Initialize data setter.
-        
+
         Parameters
         ----------
         config_handler : ConfigHandler
@@ -124,31 +120,31 @@ class DataSetter:
     def _read_data(data_path: str) -> pd.DataFrame:
         """
         Read data from CSV file.
-        
+
         Parameters
         ----------
         data_path : str
             Path to the data file
-            
+
         Returns
         -------
         pd.DataFrame
             Loaded dataframe
         """
         return pd.read_csv(data_path, sep=",", comment="#")
-    
+
     @staticmethod
     def _validate_data(data: pd.DataFrame, targets: Iterable) -> None:
         """
         Validate the loaded data.
-        
+
         Parameters
         ----------
         data : pd.DataFrame
             The dataframe to validate
         targets : Iterable
             Target column names
-            
+
         Raises
         ------
         AssertionError
@@ -156,6 +152,6 @@ class DataSetter:
         """
         # Check no missing values
         assert not data.isnull().values.any(), "Dataset contains missing values"
-        
+
         # Check targets in data
         assert set(targets).issubset(data.columns), "Target columns not found in dataset"

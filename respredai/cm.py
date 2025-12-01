@@ -1,8 +1,5 @@
 """Confusion matrix visualization and saving."""
 
-__author__ = "Ettore Rocchi"
-__email__ = "ettore.rocchi3@unibo.it"
-
 import math
 import os
 import numpy as np
@@ -24,7 +21,7 @@ def save_cm(
 ) -> None:
     """
     Save confusion matrices with performance metrics as a figure.
-    
+
     Parameters
     ----------
     f1scores : Dict[str, list]
@@ -55,7 +52,7 @@ def save_cm(
         figsize=(6 * cols, 6 * rows),
         dpi=300
     )
-    
+
     # Handle different subplot configurations
     if isinstance(axs, np.ndarray):
         axs = axs.flatten()
@@ -65,7 +62,7 @@ def save_cm(
     # Plot confusion matrix for each target
     for i, target in enumerate(targets):
         ax = axs[i]
-        
+
         # Calculate mean and std of metrics
         f1_mean, f1_std = np.nanmean(f1scores[target]), np.nanstd(f1scores[target])
         mcc_mean, mcc_std = np.nanmean(mccs[target]), np.nanstd(mccs[target])
@@ -94,7 +91,7 @@ def save_cm(
             yticklabels=cms[target].index if hasattr(cms[target], 'index') else None,
             ax=ax
         )
-        
+
         # Set labels
         ax.set_xlabel("Predicted class", fontsize=12)
         ax.set_ylabel("True class", fontsize=12)
@@ -108,8 +105,10 @@ def save_cm(
     for j in range(i + 1, rows * cols):
         fig.delaxes(axs[j])
 
-    # Save figure
+    # Save figure in confusion_matrices folder
     plt.tight_layout()
-    output_path = os.path.join(out_dir, f"Confusion_matrices_{model}.png")
+    confusion_matrices_dir = os.path.join(out_dir, "confusion_matrices")
+    os.makedirs(confusion_matrices_dir, exist_ok=True)
+    output_path = os.path.join(confusion_matrices_dir, f"Confusion_matrices_{model}.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
