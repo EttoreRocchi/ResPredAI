@@ -63,7 +63,7 @@ log_basename = respredai.log
 [Resources]
 n_jobs = -1
 
-[Checkpoint]
+[ModelSaving]
 enable = true
 compression = 3
 
@@ -82,13 +82,45 @@ respredai run --config my_config.ini
 ### Run the pipeline
 
 ```bash
-respredai run --config path/to/config.ini
+respredai run --config path/to/config.ini [--quiet]
 ```
+
+Train models using nested cross-validation with the specified configuration.
+
+📖 **[Detailed Documentation](docs/run-command.md)** - Complete guide with all configuration options and workflow details.
+
+### Extract feature importance
+
+```bash
+respredai feature-importance --output <output_folder> --model <model_name> --target <target_name> [--top-n 20]
+```
+
+Extract and visualize feature importance/coefficients from trained models across all outer cross-validation iterations.
+
+📖 **[Detailed Documentation](docs/feature-importance-command.md)** - Complete guide with interpretation, examples, and statistical considerations.
 
 ### List available models
 
 ```bash
 respredai list-models
+```
+
+Display all available machine learning models with descriptions.
+
+```
+Available Models:
+┌────────────┬──────────────────────────┐
+│ Code       │ Name                     │
+├────────────┼──────────────────────────┤
+│ LR         │ Logistic Regression      │
+│ MLP        │ Neural Network           │
+│ XGB        │ XGBoost                  │
+│ RF         │ Random Forest            │
+│ CatBoost   │ CatBoost                 │
+│ TabPFN     │ TabPFN                   │
+│ RBF_SVC    │ RBF SVM                  │
+│ Linear_SVC │ Linear SVM               │
+└────────────┴──────────────────────────┘
 ```
 
 ### Create a template configuration file
@@ -97,32 +129,50 @@ respredai list-models
 respredai create-config output_path.ini
 ```
 
+Generate a template configuration file that you can edit for your data.
+
+📖 **[Detailed Documentation](docs/create-config-command.md)** - Complete guide to configuration file structure and customization.
+
 ### Show information
 
 ```bash
 respredai info
 ```
 
-### Show version
+Display information about ResPredAI including scientific paper citation and version details.
+
+Or just:
 
 ```bash
 respredai --version
 ```
+
+to show the installed version of ResPredAI.
 
 ## Output
 
 The pipeline generates:
 - **Confusion matrices**: PNG files with heatmaps showing model performance for each target
 - **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC) with mean, std, and 95% CI
+- **Trained models**: Saved models for resumption and feature importance extraction (if model saving enabled)
+- **Feature importance**: Plots and CSV files showing feature importance/coefficients (generated separately)
 - **Log files**: Detailed execution logs (if verbosity > 0)
 
 ### Output Structure
 ```
 output_folder/
-├── Confusion_matrices_{model_name}.png     # Confusion matrices for all targets
-└── metrics/
-    └── {target_name}/
-        └── {model_name}_metrics_detailed.csv   # Comprehensive metrics CSV
+├── models/                                         # Trained models (if model saving enabled)
+│   └── {Model}_{Target}_models.joblib
+├── metrics/                                        # Detailed performance metrics
+│   └── {target_name}/
+│       └── {model_name}_metrics_detailed.csv
+├── feature_importance/                             # Feature importance (if extracted)
+│   └── {target_name}/
+│       ├── {model_name}_feature_importance.csv    # Importance values
+│       └── {model_name}_feature_importance.png    # Barplot visualization
+├── confusion_matrices/                             # Confusion matrix heatmaps
+│   └── Confusion_matrices_{model_name}.png
+└── respredai.log                                   # Execution log (if verbosity > 0)
 ```
 
 ## Citation
