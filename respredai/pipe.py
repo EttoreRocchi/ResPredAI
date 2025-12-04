@@ -10,7 +10,7 @@ from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 import torch
 
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, StratifiedGroupKFold
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
 
@@ -23,7 +23,8 @@ def get_pipeline(
     continuous_cols: list,
     inner_folds: int,
     n_jobs: int,
-    rnd_state: int
+    rnd_state: int,
+    use_groups: bool = False
 ) -> tuple[ColumnTransformer, GridSearchCV]:
     """Get the sklearn pipeline with transformer and grid search.
 
@@ -39,6 +40,8 @@ def get_pipeline(
         Number of parallel jobs
     rnd_state : int
         Random state for reproducibility
+    use_groups : bool, optional
+        Whether to use StratifiedGroupKFold instead of StratifiedKFold
 
     Returns
     -------
@@ -48,11 +51,19 @@ def get_pipeline(
         The grid search object with the model
     """
 
-    inner_cv = StratifiedKFold(
-        n_splits=inner_folds,
-        shuffle=True,
-        random_state=rnd_state
-    )
+    # Use StratifiedGroupKFold if groups are specified, otherwise StratifiedKFold
+    if use_groups:
+        inner_cv = StratifiedGroupKFold(
+            n_splits=inner_folds,
+            shuffle=True,
+            random_state=rnd_state
+        )
+    else:
+        inner_cv = StratifiedKFold(
+            n_splits=inner_folds,
+            shuffle=True,
+            random_state=rnd_state
+        )
 
     transformer = ColumnTransformer(
         transformers=[
@@ -72,14 +83,14 @@ def get_pipeline(
             max_iter=5000,
             random_state=rnd_state,
             class_weight="balanced",
-            n_jobs=n_jobs,
+            n_jobs=1,
         )
     elif model_name == "XGB":
         classifier = XGBClassifier(
             importance_type="gain",
             random_state=rnd_state,
             enable_categorical=True,
-            n_jobs=n_jobs,
+            n_jobs=1,
         )
     elif model_name == "MLP":
         classifier = MLPClassifier(
@@ -94,14 +105,14 @@ def get_pipeline(
         classifier = RandomForestClassifier(
             random_state=rnd_state,
             class_weight="balanced",
-            n_jobs=n_jobs,
+            n_jobs=1,
         )
     elif model_name == "CatBoost":
         classifier = CatBoostClassifier(
             random_state=rnd_state,
             verbose=False,
             allow_writing_files=False,
-            thread_count=n_jobs,
+            thread_count=1,
             auto_class_weights="Balanced",
         )
     elif model_name == "TabPFN":
@@ -135,7 +146,7 @@ def get_pipeline(
         estimator=classifier,
         param_grid=PARAM_GRID[model_name],
         cv=inner_cv,
-        scoring="roc_auc",
+        scoring='roc_auc',
         n_jobs=n_jobs,
         return_train_score=True
     )

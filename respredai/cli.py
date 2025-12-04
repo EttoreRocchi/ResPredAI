@@ -45,9 +45,13 @@ def print_config_info(config_handler: ConfigHandler):
 
     table.add_row("Data Path", str(config_handler.data_path))
     table.add_row("Targets", ", ".join(config_handler.targets))
+    table.add_row("Group Column", str(config_handler.group_column) if config_handler.group_column else "None")
     table.add_row("Models", ", ".join(config_handler.models))
     table.add_row("Outer Folds", str(config_handler.outer_folds))
     table.add_row("Inner Folds", str(config_handler.inner_folds))
+    table.add_row("Threshold Calibration", str(config_handler.calibrate_threshold))
+    if config_handler.calibrate_threshold:
+        table.add_row("Threshold Method", config_handler.threshold_method.upper())
     table.add_row("Random Seed", str(config_handler.seed))
     table.add_row("Parallel Jobs", str(config_handler.n_jobs))
     table.add_row("Output Folder", str(config_handler.out_folder))
@@ -375,11 +379,14 @@ def create_config(
 data_path = ./data/your_data.csv
 targets = Target1,Target2
 continuous_features = Feature1,Feature2,Feature3
+# group_column = PatientID  # Optional: column for grouping samples to prevent data leakage
 
 [Pipeline]
 models = LR,RF,XGB
 outer_folds = 5
 inner_folds = 3
+calibrate_threshold = false
+threshold_method = auto
 
 [Reproducibility]
 seed = 42

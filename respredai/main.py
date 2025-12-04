@@ -9,7 +9,7 @@ import joblib
 
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold, cross_val_predict, TunedThresholdClassifierCV
 from sklearn.metrics import (
     matthews_corrcoef,
     confusion_matrix,
@@ -18,11 +18,42 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     balanced_accuracy_score,
+    roc_curve,
+    make_scorer,
 )
 
 from .utils import ConfigHandler, DataSetter
 from .pipe import get_pipeline
 from .cm import save_cm
+
+
+def youden_j_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Calculate Youden's J statistic.
+
+    J = Sensitivity + Specificity - 1 = TPR - FPR
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True binary labels (0 or 1)
+    y_pred : np.ndarray
+        Predicted binary labels (0 or 1)
+
+    Returns
+    -------
+    float
+        Youden's J statistic, ranging from 0 (random) to 1 (perfect)
+    
+    Notes
+    -----
+    Maximizing the Youden's J statistic is equivalent to maximizing the balanced accuracy.
+    """
+    # TPR (sensitivity) = recall for positive class (label=1)
+    tpr = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
+    # TNR (specificity) = recall for negative class (label=0)
+    tnr = recall_score(y_true, y_pred, pos_label=0, zero_division=0)
+    return tpr + tnr - 1
 
 
 def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
@@ -150,13 +181,15 @@ def get_model_path(
 def save_models(
     fold_models: list,
     fold_transformers: list,
+    fold_thresholds: list,
+    fold_hyperparams: list,
     metrics: dict,
     completed_folds: int,
     model_path: Path,
     compression: int = 3
 ):
     """
-    Save trained models with all fold models and metrics.
+    Save trained models with all fold models, thresholds, hyperparameters, and metrics.
 
     Parameters
     ----------
@@ -164,6 +197,10 @@ def save_models(
         List of trained models (one per completed fold)
     fold_transformers : list
         List of fitted transformers (one per completed fold)
+    fold_thresholds : list
+        List of calibrated thresholds (one per completed fold)
+    fold_hyperparams : list
+        List of best hyperparameters (one per completed fold)
     metrics : dict
         Dictionary containing all metrics for this model-target
     completed_folds : int
@@ -178,6 +215,8 @@ def save_models(
     model_data = {
         'fold_models': fold_models,
         'fold_transformers': fold_transformers,
+        'fold_thresholds': fold_thresholds,
+        'fold_hyperparams': fold_hyperparams,
         'metrics': metrics,
         'completed_folds': completed_folds,
         'timestamp': pd.Timestamp.now().isoformat()
@@ -264,6 +303,10 @@ def perform_pipeline(
     # Apply one-hot encoding
     X = ohe_transformer.fit_transform(X)
 
+    # Clean feature names for XGBoost compatibility (remove <, > characters)
+    X.columns = X.columns.str.replace('<', '_lt_', regex=False)
+    X.columns = X.columns.str.replace('>', '_gt_', regex=False)
+
     if config_handler.verbosity:
         config_handler.logger.info(
             f"After preprocessing, data dimension: {X.shape}. "
@@ -291,7 +334,8 @@ def perform_pipeline(
                 continuous_cols=datasetter.continuous_features,
                 inner_folds=config_handler.inner_folds,
                 n_jobs=config_handler.n_jobs,
-                rnd_state=config_handler.seed
+                rnd_state=config_handler.seed,
+                use_groups=(datasetter.groups is not None)
             )
         except Exception as e:
             if config_handler.verbosity:
@@ -304,11 +348,19 @@ def perform_pipeline(
                 progress_callback.skip_model(model, total_work_skipped, "initialization error")
             continue
 
-        outer_cv = StratifiedKFold(
-            n_splits=config_handler.outer_folds,
-            shuffle=True,
-            random_state=config_handler.seed
-        )
+        # Use StratifiedGroupKFold if groups are specified, otherwise StratifiedKFold
+        if datasetter.groups is not None:
+            outer_cv = StratifiedGroupKFold(
+                n_splits=config_handler.outer_folds,
+                shuffle=True,
+                random_state=config_handler.seed
+            )
+        else:
+            outer_cv = StratifiedKFold(
+                n_splits=config_handler.outer_folds,
+                shuffle=True,
+                random_state=config_handler.seed
+            )
 
         f1scores, mccs, cms, aurocs = {}, {}, {}, {}
         all_metrics = {}  # Store comprehensive metrics
@@ -326,6 +378,8 @@ def perform_pipeline(
             start_fold = 0
             fold_models = []
             fold_transformers = []
+            fold_thresholds = []
+            fold_hyperparams = []
 
             if config_handler.save_models_enable and model_path.exists():
                 model_data = load_models(model_path)
@@ -355,6 +409,8 @@ def perform_pipeline(
                         start_fold = completed_folds
                         fold_models = model_data.get('fold_models', [])
                         fold_transformers = model_data.get('fold_transformers', [])
+                        fold_thresholds = model_data.get('fold_thresholds', [])
+                        fold_hyperparams = model_data.get('fold_hyperparams', [])
 
                         # Restore partial metrics
                         all_metrics[target] = model_data['metrics'].get('all_metrics', [])
@@ -390,7 +446,11 @@ def perform_pipeline(
                     resumed_from=start_fold
                 )
 
-            for i, (train_set, test_set) in enumerate(outer_cv.split(X, y)):
+            # Pass groups to split if available
+            split_args = [X, y]
+            if datasetter.groups is not None:
+                split_args.append(datasetter.groups)
+            for i, (train_set, test_set) in enumerate(outer_cv.split(*split_args)):
                 # Skip already completed folds
                 if i < start_fold:
                     continue
@@ -412,25 +472,112 @@ def perform_pipeline(
                 X_test_scaled = transformer.transform(X_test)
 
                 try:
+                    # Pass groups to GridSearchCV if available
+                    fit_params = {}
+                    if datasetter.groups is not None:
+                        fit_params['groups'] = datasetter.groups[train_set]
 
-                    grid.fit(X=X_train_scaled, y=y_train)
+                    # Step 1: Hyperparameter tuning with GridSearchCV (optimizes ROC-AUC)
+                    grid.fit(X=X_train_scaled, y=y_train, **fit_params)
 
                     if config_handler.verbosity == 2:
                         config_handler.logger.info(
                             f"Model {model} trained for iteration: {i+1}."
                         )
 
-                    best_classifier = grid.best_estimator_
-                    y_pred = best_classifier.predict(X_test_scaled)
+                    # Step 2: Get best estimator and hyperparameters from GridSearchCV
+                    best_estimator = grid.best_estimator_
+                    best_params = grid.best_params_
 
-                    # Handle probability prediction
-                    if hasattr(best_classifier, 'predict_proba'):
-                        y_prob = best_classifier.predict_proba(X_test_scaled)
+                    # Step 3: Threshold calibration using Youden's J statistic (if enabled)
+                    if config_handler.calibrate_threshold:
+                        # Determine threshold calibration method
+                        threshold_method = config_handler.threshold_method
+                        if threshold_method == "auto":
+                            # Auto: use OOF for small datasets, CV for large datasets
+                            threshold_method = "oof" if len(y_train) < 1000 else "cv"
+
+                        if threshold_method == "oof":
+                            # Method 1: Out-of-Fold (OOF) predictions approach
+                            # Use the same CV splitter as GridSearchCV
+                            if datasetter.groups is not None:
+                                inner_cv = StratifiedGroupKFold(
+                                    n_splits=config_handler.inner_folds,
+                                    shuffle=True,
+                                    random_state=config_handler.seed
+                                )
+                                cv_fit_params = {'groups': datasetter.groups[train_set]}
+                            else:
+                                inner_cv = StratifiedKFold(
+                                    n_splits=config_handler.inner_folds,
+                                    shuffle=True,
+                                    random_state=config_handler.seed
+                                )
+                                cv_fit_params = {}
+
+                            # Get OOF probability predictions on training data
+                            y_pred_proba_oof = cross_val_predict(
+                                best_estimator,
+                                X_train_scaled,
+                                y_train,
+                                cv=inner_cv,
+                                method='predict_proba',
+                                **cv_fit_params
+                            )
+
+                            # Calculate ROC curve and find optimal threshold using Youden's J
+                            fpr, tpr, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
+                            youden_j = tpr - fpr
+                            best_threshold = thresholds[np.argmax(youden_j)]
+
+                            # The best_estimator is already trained, use it as the final classifier
+                            best_classifier = best_estimator
+
+                        else:  # threshold_method == "cv"
+                            # Method 2: TunedThresholdClassifierCV approach
+                            # Create Youden's J scorer
+                            youden_scorer = make_scorer(youden_j_score)
+
+                            # Set best hyperparameters on the unfitted estimator
+                            grid.estimator.set_params(**best_params)
+
+                            # Create CV splitter for threshold calibration
+                            inner_tuner_cv = StratifiedKFold(
+                                n_splits=config_handler.inner_folds,
+                                shuffle=True,
+                                random_state=config_handler.seed
+                            )
+
+                            # Wrap the unfitted estimator in TunedThresholdClassifierCV
+                            tuned_model = TunedThresholdClassifierCV(
+                                estimator=grid.estimator,
+                                cv=inner_tuner_cv,
+                                scoring=youden_scorer,
+                                n_jobs=1
+                            )
+
+                            # Fit to calibrate threshold with CV
+                            tuned_model.fit(X_train_scaled, y_train)
+                            best_classifier = tuned_model
+                            best_threshold = tuned_model.best_threshold_
                     else:
-                        # Fallback for models without predict_proba
-                        y_score = best_classifier.decision_function(X_test_scaled)
-                        # Convert to 2D probability array
-                        y_prob = np.column_stack([1 - y_score, y_score])
+                        # No threshold calibration - use GridSearchCV's best estimator with default threshold
+                        best_classifier = best_estimator
+                        best_threshold = 0.5
+
+                    # Step 4: Predict on test set using calibrated threshold
+                    if config_handler.calibrate_threshold and threshold_method == "cv":
+                        # For TunedThresholdClassifierCV, use predict() which applies threshold automatically
+                        y_pred = best_classifier.predict(X_test_scaled)
+                        y_prob = best_classifier.predict_proba(X_test_scaled)
+                    elif config_handler.calibrate_threshold and threshold_method == "oof":
+                        # For OOF method, manually apply threshold
+                        y_prob = best_classifier.predict_proba(X_test_scaled)
+                        y_pred = (y_prob[:, 1] >= best_threshold).astype(int)
+                    else:
+                        # For no calibration, use direct methods
+                        y_prob = best_classifier.predict_proba(X_test_scaled)
+                        y_pred = best_classifier.predict(X_test_scaled)
 
                     # Calculate comprehensive metrics
                     fold_metrics = metric_dict(
@@ -453,9 +600,11 @@ def perform_pipeline(
                         )
                     )
 
-                    # Store the best model and transformer for this fold
+                    # Store the best model, transformer, threshold, and hyperparameters for this fold
                     fold_models.append(best_classifier)
                     fold_transformers.append(transformer)
+                    fold_thresholds.append(best_threshold)
+                    fold_hyperparams.append(best_params)
 
                     # Update progress for successful fold
                     if progress_callback:
@@ -486,6 +635,8 @@ def perform_pipeline(
                     cms[target].append(np.full((2, 2), np.nan))
                     fold_models.append(None)
                     fold_transformers.append(None)
+                    fold_thresholds.append(None)
+                    fold_hyperparams.append(None)
 
                     if progress_callback:
                         progress_callback.complete_fold(i + 1, nan_metrics)
@@ -503,6 +654,8 @@ def perform_pipeline(
                     save_models(
                         fold_models=fold_models,
                         fold_transformers=fold_transformers,
+                        fold_thresholds=fold_thresholds,
+                        fold_hyperparams=fold_hyperparams,
                         metrics=target_metrics,
                         completed_folds=i + 1,
                         model_path=model_path,

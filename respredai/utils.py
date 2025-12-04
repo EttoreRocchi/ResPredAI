@@ -38,11 +38,14 @@ class ConfigHandler:
         self.continuous_features = [
             f.strip() for f in config.get("Data", "continuous_features").split(",")
         ]
+        self.group_column = config.get("Data", "group_column", fallback=None)
 
         # Section: Pipeline
         self.models = [m.strip() for m in config.get("Pipeline", "models").split(",")]
         self.outer_folds = config.getint("Pipeline", "outer_folds")
         self.inner_folds = config.getint("Pipeline", "inner_folds")
+        self.calibrate_threshold = config.getboolean("Pipeline", "calibrate_threshold", fallback=False)
+        self.threshold_method = config.get("Pipeline", "threshold_method", fallback="auto").lower()
 
         # Section: Reproducibility
         self.seed = config.getint("Reproducibility", "seed")
@@ -64,6 +67,12 @@ class ConfigHandler:
         if not 1 <= self.model_compression <= 9:
             raise ValueError(
                 f"Model compression must be between 1 and 9, got {self.model_compression}"
+            )
+
+        # Validate threshold method
+        if self.threshold_method not in ["auto", "oof", "cv"]:
+            raise ValueError(
+                f"Threshold method must be 'auto', 'oof', or 'cv', got '{self.threshold_method}'"
             )
 
     @staticmethod
@@ -109,10 +118,25 @@ class DataSetter:
         """
         self.data = self._read_data(config_handler.data_path)
         self._validate_data(self.data, config_handler.targets)
-        self.X, self.Y = (
-            self.data.drop(config_handler.targets, axis=1),
-            self.data[config_handler.targets]
-        )
+
+        # Extract groups if group_column is specified
+        self.groups = None
+        if config_handler.group_column:
+            if config_handler.group_column not in self.data.columns:
+                raise ValueError(
+                    f"Group column '{config_handler.group_column}' not found in data. "
+                    f"Available columns: {list(self.data.columns)}"
+                )
+            self.groups = self.data[config_handler.group_column].values
+            # Drop group column and targets from X
+            self.X = self.data.drop(
+                config_handler.targets + [config_handler.group_column], axis=1
+            )
+        else:
+            # Drop only targets from X
+            self.X = self.data.drop(config_handler.targets, axis=1)
+
+        self.Y = self.data[config_handler.targets]
         self.targets = config_handler.targets
         self.continuous_features = config_handler.continuous_features
 
