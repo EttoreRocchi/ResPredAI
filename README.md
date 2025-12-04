@@ -182,6 +182,10 @@ output_folder/
 └── respredai.log                                   # Execution log (if verbosity > 0)
 ```
 
+## Changelog
+
+See the full history of changes in the [CHANGELOG.md](CHANGELOG.md) file.
+
 ## Citation
 
 If you use `ResPredAI` in your research, please cite:
