@@ -189,8 +189,8 @@ def plot_feature_importance(
 
     y_pos = np.arange(len(top_features))
     if has_negative:
-        # Linear models: use seagreen for positive, firebrick for negative
-        colors = ['seagreen' if val >= 0 else 'firebrick' for val in top_features.values]
+        # Linear models: use firebrick for positive, seagreen for negative
+        colors = ['firebrick' if val >= 0 else 'seagreen' for val in top_features.values]
     else:
         # Tree-based models: use cornflowerblue for all bars
         colors = ['cornflowerblue'] * len(top_features)
