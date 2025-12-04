@@ -38,6 +38,8 @@ continuous_features = Feature1,Feature2
 models = LR,XGB,RF
 outer_folds = 5
 inner_folds = 3
+calibrate_threshold = false
+threshold_method = auto
 
 [Reproducibility]
 seed = 42
@@ -72,11 +74,13 @@ After generating the template, customize it for your data:
 data_path = ./path/to/your/data.csv
 targets = AntibioticA,AntibioticB
 continuous_features = Feature1,Feature3,Feature4
+# group_column = PatientID  # Optional
 ```
 
 - **data_path**: Path to your CSV file
 - **targets**: Comma-separated list of target columns (binary classification)
 - **continuous_features**: Features to scale with StandardScaler (all others are one-hot encoded)
+- **group_column** (optional): Column name for grouping multiple samples from the same patient/subject to prevent data leakage
 
 ### 2. Select Models
 
@@ -97,7 +101,23 @@ inner_folds = 3  # For hyperparameter tuning
 - **outer_folds**: Number of folds for performance evaluation
 - **inner_folds**: Number of folds for GridSearchCV hyperparameter tuning
 
-### 4. Adjust Resources
+### 4. Configure Threshold Calibration (Optional)
+
+```ini
+calibrate_threshold = true
+threshold_method = auto
+```
+
+- **calibrate_threshold**: Enable decision threshold optimization using Youden's J statistic
+  - `true`: Calibrate threshold to maximize Youden's J (Sensitivity + Specificity - 1)
+  - `false`: Use default threshold of 0.5
+- **threshold_method**: Method for threshold calibration (only used when `calibrate_threshold = true`)
+  - `auto`: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
+  - `oof`: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold maximizing Youden's J across all concatenated samples
+  - `cv`: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
+  - **Key difference**: `oof` finds one threshold on all concatenated OOF predictions (global optimization), while `cv` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
+
+### 5. Adjust Resources
 
 ```ini
 [Resources]
@@ -108,7 +128,7 @@ n_jobs = -1  # Use all cores
 - `1`: No parallelization (useful for debugging)
 - `N`: Use N cores
 
-### 5. Configure Model Saving
+### 6. Configure Model Saving
 
 ```ini
 [ModelSaving]
@@ -119,7 +139,7 @@ compression = 3
 - **enable**: Set to `true` to save models every folds
 - **compression**: 0-9 (0=no compression, 3=balanced, 9=maximum)
 
-### 6. Set Output Location
+### 7. Set Output Location
 
 ```ini
 [Output]

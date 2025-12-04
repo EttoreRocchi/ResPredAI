@@ -46,6 +46,11 @@ continuous_features = Age,Weight,Temperature
 - `continuous_features` - Comma-separated list of continuous feature names
   - These features will be scaled using StandardScaler
   - All other features are treated as categorical and one-hot encoded
+- `group_column` (optional) - Column name for grouping related samples
+  - Use when you have multiple samples from the same patient/subject
+  - Prevents data leakage by keeping all samples from the same group in the same fold
+  - Enables `StratifiedGroupKFold` for both outer and inner cross-validation (if not specified, standard `StratifiedKFold` is used)
+  - See details in [Configuration Documentation](create-config-command.md)
 
 ### [Pipeline] Section
 
@@ -56,6 +61,8 @@ Controls the machine learning pipeline configuration.
 models = LR,RF,XGB,CatBoost
 outer_folds = 5
 inner_folds = 3
+calibrate_threshold = false
+threshold_method = auto
 ```
 
 **Parameters:**
@@ -66,6 +73,17 @@ inner_folds = 3
   - Used for model evaluation
 - `inner_folds` - Number of folds for inner cross-validation
   - Used for hyperparameter tuning with GridSearchCV
+- `calibrate_threshold` - Enable decision threshold calibration (optional, default: `false`)
+  - `true`: Calibrate threshold using Youden's J statistic (Sensitivity + Specificity - 1)
+  - `false`: Use default threshold of 0.5
+  - Threshold calibration uses `inner_folds` for cross-validation
+  - Hyperparameters are tuned first (optimizing ROC-AUC), then threshold is calibrated
+- `threshold_method` - Method for threshold calibration (optional, default: `auto`)
+  - `auto`: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
+  - `oof`: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold maximizing Youden's J across all concatenated samples
+  - `cv`: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
+  - **Key difference**: `oof` finds one threshold on all concatenated OOF predictions (global optimization), while `cv` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
+  - Only used when `calibrate_threshold = true`
 
 ### [Reproducibility] Section
 

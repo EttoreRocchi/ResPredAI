@@ -9,6 +9,10 @@ Implementation of the pipeline described in:
 
 > Bonazzetti, C., Rocchi, E., Toschi, A. _et al._ Artificial Intelligence model to predict resistances in Gram-negative bloodstream infections. _npj Digit. Med._ **8**, 319 (2025). https://doi.org/10.1038/s41746-025-01696-x
 
+<p align="center">
+  <img src="docs/logo_ResPredAI.png" alt="ResPredAI Logo" width="350"/>
+</p>
+
 ## Installation
 
 ```bash
@@ -47,11 +51,14 @@ Edit `my_config.ini` with your data paths and parameters:
 data_path = ./data/my_data.csv
 targets = Target1,Target2
 continuous_features = Feature1,Feature2,Feature3
+# group_column = PatientID  # Optional: prevents data leakage when you have multiple samples per patient
 
 [Pipeline]
 models = LR,RF,XGB,CatBoost
 outer_folds = 5
 inner_folds = 3
+calibrate_threshold = false
+threshold_method = auto
 
 [Reproducibility]
 seed = 42

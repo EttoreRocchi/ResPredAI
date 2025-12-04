@@ -218,3 +218,6 @@ __marimo__/
 # Project specific
 *.ipynb
 out*/
+data/
+configs/
+utils/
