@@ -208,8 +208,8 @@ Each `{model}_metrics_detailed.csv` contains:
 - **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC)
 - **Mean**: Mean value across folds
 - **Std**: Standard deviation across folds
-- **CI_95**: 95% confidence interval half-width
-- **Mean±CI**: Formatted mean ± confidence interval
+- **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 10'000 resamples)
+- **CI95_upper**: Upper bound of 95% confidence interval (bootstrap, 10'000 resamples)
 
 ### Confusion Matrix Plots
 

@@ -1,8 +1,9 @@
 # ResPredAI
 
-## Antimicrobial **Res**istance **pre**dictions via **AI** models
+## Antimicrobial resistance predictions via artificial intelligence models
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+![CI](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/ci.yaml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Implementation of the pipeline described in:
