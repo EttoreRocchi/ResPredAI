@@ -34,6 +34,11 @@ dynamic = ["version", "dependencies"]
 [project.scripts]
 respredai = "respredai.cli:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
 [tool.setuptools.dynamic]
 version = {attr = "respredai.__version__"}
 dependencies = {file = ["requirements.txt"]}
@@ -48,3 +53,8 @@ dependencies = {file = ["requirements.txt"]}
 where = ["."]
 include = ["respredai*"]
 exclude = ["docs*", "example*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
