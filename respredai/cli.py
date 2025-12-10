@@ -375,6 +375,14 @@ def create_config(
         respredai create-config my_config.ini
     """
 
+    # Validate file extension
+    if output_path.suffix.lower() != '.ini':
+        console.print(
+            "[bold red]Error:[/bold red] Configuration file must have .ini extension",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
     template = """[Data]
 data_path = ./data/your_data.csv
 targets = Target1,Target2
