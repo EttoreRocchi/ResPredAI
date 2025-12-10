@@ -4,7 +4,6 @@ import warnings
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from scipy import stats
 import joblib
 
 from sklearn.preprocessing import OneHotEncoder
@@ -88,60 +87,95 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
     }
 
 
-def ci_halfwidth(std: float, n: int, confidence: float = 0.95) -> float:
+def bootstrap_ci(
+    values: np.ndarray,
+    confidence: float = 0.95,
+    n_bootstrap: int = 10_000,
+    random_state: int = 42
+) -> tuple:
     """
-    Calculate confidence interval half-width.
+    Calculate bootstrap confidence interval.
 
     Parameters
     ----------
-    std : float
-        Standard deviation
-    n : int
-        Sample size (number of folds)
+    values : np.ndarray
+        Array of metric values from cross-validation folds
     confidence : float
         Confidence level (default: 0.95)
+    n_bootstrap : int
+        Number of bootstrap resamples (default: 10,000)
+    random_state : int
+        Random seed for reproducibility
 
     Returns
     -------
-    float
-        Half-width of the confidence interval
+    tuple
+        (lower_bound, upper_bound) of the confidence interval
     """
-    # Use t-distribution for small sample sizes
-    t_value = stats.t.ppf((1 + confidence) / 2, n - 1)
-    return t_value * (std / np.sqrt(n))
+    rng = np.random.default_rng(random_state)
+    n = len(values)
+
+    # Bootstrap resampling with replacement
+    bootstrap_means = np.array([
+        np.mean(rng.choice(values, size=n, replace=True))
+        for _ in range(n_bootstrap)
+    ])
+
+    # Calculate percentiles for CI
+    alpha = (1 - confidence) / 2
+    lower = np.percentile(bootstrap_means, alpha * 100)
+    upper = np.percentile(bootstrap_means, (1 - alpha) * 100)
+
+    return lower, upper
 
 
 def save_metrics_summary(
     metrics_dict: dict,
-    n_folds: int,
     output_path: Path,
-    confidence: float = 0.95
+    confidence: float = 0.95,
+    n_bootstrap: int = 10_000,
+    random_state: int = 42
 ):
     """
-    Save metrics summary with mean, std, and confidence intervals.
+    Save metrics summary with mean, std, and bootstrap confidence intervals.
 
     Parameters
     ----------
     metrics_dict : dict
         Dictionary with metric names as keys and lists of values as items
-    n_folds : int
-        Number of cross-validation folds
     output_path : Path
         Path to save the CSV file
     confidence : float
         Confidence level for CI (default: 0.95)
+    n_bootstrap : int
+        Number of bootstrap resamples (default: 10,000)
+    random_state : int
+        Random seed for reproducibility
     """
     df_metrics = pd.DataFrame(metrics_dict)
     mean = df_metrics.mean()
     std = df_metrics.std()
-    ci = df_metrics.apply(lambda x: ci_halfwidth(x.std(), n_folds, confidence))
 
+    # Calculate bootstrap CI for each metric
+    ci_lower = []
+    ci_upper = []
+    for col in df_metrics.columns:
+        lower, upper = bootstrap_ci(
+            df_metrics[col].values,
+            confidence=confidence,
+            n_bootstrap=n_bootstrap,
+            random_state=random_state
+        )
+        ci_lower.append(lower)
+        ci_upper.append(upper)
+
+    ci_pct = int(confidence * 100)
     summary_df = pd.DataFrame({
         'Metric': df_metrics.columns,
         'Mean': mean.values,
         'Std': std.values,
-        f'CI_{int(confidence*100)}': ci.values,
-        'Mean±CI': [f"{m:.3f} ± {c:.3f}" for m, c in zip(mean, ci)]
+        f'CI{ci_pct}_lower': ci_lower,
+        f'CI{ci_pct}_upper': ci_upper
     })
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -715,9 +749,10 @@ def perform_pipeline(
 
             save_metrics_summary(
                 metrics_dict=all_metrics[target],
-                n_folds=config_handler.outer_folds,
                 output_path=metrics_output_path,
-                confidence=0.95
+                confidence=0.95,
+                n_bootstrap=10_000,
+                random_state=config_handler.seed
             )
 
             if config_handler.verbosity:
