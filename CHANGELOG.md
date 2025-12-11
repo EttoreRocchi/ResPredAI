@@ -2,6 +2,23 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.2.0] - 2025-12-10
+
+### Added
+- **`validate-config` command** to validate configuration files without running the pipeline
+  - Optional `--check-data` flag to also verify data file existence and column validity
+- **CLI override options** for the `run` command: `--models`, `--targets`, `--output`, `--seed`
+- **CONTRIBUTING.md** with development setup guide and contribution workflow
+
+### Changed
+- **Bootstrap confidence intervals** (10,000 resamples) replace t-distribution CI in metrics output
+- User-friendly error messages for missing config files or data paths
+
+### Documentation
+- Added `docs/validate-config-command.md`
+- Updated `docs/run-command.md` with CLI overrides section
+
+
 ## [1.1.0] - 2025-12-04
 
 ### Added
