@@ -227,7 +227,7 @@ class TrainingProgressCallback:
         if self.overall_task is not None:
             self.progress.advance(self.overall_task, advance=num_folds)
 
-        self.console.print(f"  [dim]⊙ Skipped {target_name} (loaded from {reason})[/dim]")
+        self.console.print(f"  [dim]✓ Skipped {target_name} (loaded from {reason})[/dim]")
 
     def skip_model(self, model_name: str, total_work_skipped: int, reason: str = "error"):
         """Skip a model (failed to initialize)."""
@@ -243,7 +243,7 @@ class TrainingProgressCallback:
         if self.overall_task is not None:
             self.progress.advance(self.overall_task, advance=total_work_skipped)
 
-        self.console.print(f"[dim]⊙ Skipped model: {model_name} ({reason})[/dim]")
+        self.console.print(f"[dim]✓ Skipped model: {model_name} ({reason})[/dim]")
 
     def stop(self):
         """Stop the progress tracking."""
@@ -253,6 +253,127 @@ class TrainingProgressCallback:
         self.progress.stop()
 
 
+def _load_config_with_error_handling(config_path: Path) -> ConfigHandler:
+    """Load configuration with user-friendly error handling."""
+    if not config_path.exists():
+        console.print(
+            f"\n[bold red]Error:[/bold red] Configuration file not found: [cyan]{config_path}[/cyan]\n\n"
+            f"[dim]Hint: Create a config file with:[/dim] respredai create-config {config_path}",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
+    if config_path.suffix.lower() != '.ini':
+        console.print(
+            f"\n[bold red]Error:[/bold red] Configuration file must have .ini extension, "
+            f"got: [cyan]{config_path.suffix}[/cyan]",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        return ConfigHandler(str(config_path))
+    except FileNotFoundError as e:
+        console.print(
+            f"\n[bold red]Error:[/bold red] {str(e)}\n\n"
+            f"[dim]Check that your data_path in the config file points to an existing file.[/dim]",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+    except ValueError as e:
+        console.print(
+            f"\n[bold red]Configuration Error:[/bold red] {str(e)}",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(
+            f"\n[bold red]Error loading configuration:[/bold red] {str(e)}",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
+
+def _load_data_with_error_handling(config_handler: ConfigHandler) -> DataSetter:
+    """Load data with user-friendly error handling."""
+    data_path = Path(config_handler.data_path)
+
+    if not data_path.exists():
+        console.print(
+            f"\n[bold red]Error:[/bold red] Data file not found: [cyan]{data_path}[/cyan]\n\n"
+            f"[dim]Check that 'data_path' in your config file points to an existing CSV file.[/dim]",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        return DataSetter(config_handler)
+    except FileNotFoundError as e:
+        console.print(
+            f"\n[bold red]Error:[/bold red] {str(e)}",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+    except ValueError as e:
+        console.print(
+            f"\n[bold red]Data Error:[/bold red] {str(e)}",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+    except AssertionError as e:
+        console.print(
+            f"\n[bold red]Data Validation Error:[/bold red] {str(e)}\n\n"
+            f"[dim]Check your data for missing values or invalid entries.[/dim]",
+            style="red"
+        )
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def validate_config(
+    config: Path = typer.Argument(
+        ...,
+        help="Path to the configuration file (.ini format)",
+    ),
+    check_data: bool = typer.Option(
+        False,
+        "--check-data",
+        "-d",
+        help="Also validate that the data file exists and can be loaded"
+    )
+):
+    """Validate a configuration file without running the pipeline."""
+
+    console.print(f"\n[bold cyan]Validating configuration: {config}[/bold cyan]\n")
+
+    config_handler = _load_config_with_error_handling(config)
+    console.print("[bold green]✓[/bold green] Configuration file syntax is valid")
+    console.print("[bold green]✓[/bold green] All required parameters present")
+    console.print("[bold green]✓[/bold green] Parameter values are valid")
+
+    print_config_info(config_handler)
+
+    if check_data:
+        console.print("\n[bold cyan]Checking data file...[/bold cyan]")
+        datasetter = _load_data_with_error_handling(config_handler)
+        console.print(
+            f"[bold green]✓[/bold green] Data loaded successfully: "
+            f"{datasetter.X.shape[0]} samples, {datasetter.X.shape[1]} features"
+        )
+        console.print(f"[bold green]✓[/bold green] Targets: {', '.join(datasetter.targets)}")
+        if config_handler.group_column:
+            n_groups = len(set(datasetter.groups))
+            console.print(f"[bold green]✓[/bold green] Groups: {n_groups} unique groups")
+
+    console.print(
+        Panel(
+            "[bold green]✓ Configuration is valid![/bold green]",
+            title="Validation Passed",
+            border_style="green"
+        )
+    )
+
+
 @app.command()
 def run(
     config: Path = typer.Option(
@@ -260,73 +381,109 @@ def run(
         "--config",
         "-c",
         help="Path to the configuration file (.ini format)",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
     ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
         "-q",
         help="Suppress banner and progress output"
+    ),
+    # CLI overrides
+    models: Optional[str] = typer.Option(
+        None,
+        "--models",
+        "-m",
+        help="Override models (comma-separated, e.g., 'LR,RF,XGB')"
+    ),
+    targets: Optional[str] = typer.Option(
+        None,
+        "--targets",
+        "-t",
+        help="Override targets (comma-separated)"
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Override output folder"
+    ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        "-s",
+        help="Override random seed"
     )
 ):
     """
     Run the machine learning pipeline with the specified configuration.
 
+    Configuration options can be overridden via CLI flags without editing the file.
+
     Example:
         respredai run --config my_config.ini
+        respredai run --config my_config.ini --models LR,RF --output ./new_output/
+        respredai run --config my_config.ini --seed 123
     """
     print_banner()
 
+    # Load configuration with error handling
+    config_handler = _load_config_with_error_handling(config)
+
+    # Apply CLI overrides
+    if models:
+        config_handler.models = [m.strip() for m in models.split(",")]
+        console.print(f"[dim]Override: models = {', '.join(config_handler.models)}[/dim]")
+    if targets:
+        config_handler.targets = [t.strip() for t in targets.split(",")]
+        console.print(f"[dim]Override: targets = {', '.join(config_handler.targets)}[/dim]")
+    if output:
+        config_handler.out_folder = str(output)
+        console.print(f"[dim]Override: output = {config_handler.out_folder}[/dim]")
+    if seed is not None:
+        config_handler.seed = seed
+        console.print(f"[dim]Override: seed = {config_handler.seed}[/dim]")
+
+    if not quiet:
+        console.print("\n[bold green]✓[/bold green] Configuration loaded successfully\n")
+        print_config_info(config_handler)
+
+    # Load data with error handling
+    console.print("\n[bold cyan]Loading data...[/bold cyan]")
+    datasetter = _load_data_with_error_handling(config_handler)
+    console.print(
+        f"[bold green]✓[/bold green] Data loaded: {datasetter.X.shape[0]} samples, "
+        f"{datasetter.X.shape[1]} features"
+    )
+
+    # Create output directory
+    Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
+
+    # Create progress callback
+    progress_callback = TrainingProgressCallback(console, quiet)
+
+    # Run pipeline
+    console.print("\n[bold cyan]Starting model training pipeline...[/bold cyan]\n")
     try:
-        # Load configuration
-        with console.status("[bold green]Loading configuration..."):
-            config_handler = ConfigHandler(str(config))
-
-        if not quiet:
-            console.print("\n[bold green]✓[/bold green] Configuration loaded successfully\n")
-            print_config_info(config_handler)
-
-        # Load data
-        console.print("\n[bold cyan]Loading data...[/bold cyan]")
-        with console.status("[bold green]Reading and validating data..."):
-            datasetter = DataSetter(config_handler)
-        console.print(
-            f"[bold green]✓[/bold green] Data loaded: {datasetter.X.shape[0]} samples, "
-            f"{datasetter.X.shape[1]} features"
-        )
-
-        # Create output directory
-        Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
-
-        # Create progress callback
-        progress_callback = TrainingProgressCallback(console, quiet)
-
-        # Run pipeline
-        console.print("\n[bold cyan]Starting model training pipeline...[/bold cyan]\n")
         perform_pipeline(
             datasetter=datasetter,
             models=config_handler.models,
             config_handler=config_handler,
             progress_callback=progress_callback
         )
-
-        # Success message
-        success_panel = Panel(
-            f"[bold green]✓ Pipeline completed successfully![/bold green]\n\n"
-            f"Results saved to: [cyan]{config_handler.out_folder}[/cyan]",
-            title="Success",
-            border_style="green"
-        )
-        console.print("\n", success_panel)
-
     except Exception as e:
-        console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
+        console.print(f"\n[bold red]Pipeline Error:[/bold red] {str(e)}")
         if not quiet:
             console.print_exception()
         raise typer.Exit(code=1)
+
+    # Success message
+    success_panel = Panel(
+        f"[bold green]✓ Pipeline completed successfully![/bold green]\n\n"
+        f"Results saved to: [cyan]{config_handler.out_folder}[/cyan]",
+        title="Success",
+        border_style="green"
+    )
+    console.print("\n", success_panel)
 
 
 @app.command()
