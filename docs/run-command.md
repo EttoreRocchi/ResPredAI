@@ -5,7 +5,7 @@ The `run` command executes the full machine learning pipeline with nested cross-
 ## Usage
 
 ```bash
-respredai run --config <path_to_config.ini> [--quiet]
+respredai run --config <path_to_config.ini> [options]
 ```
 
 ## Options
@@ -20,6 +20,32 @@ respredai run --config <path_to_config.ini> [--quiet]
 
 - `--quiet, -q` - Suppress banner and progress output
   - Does not suppress error messages or logs
+
+### CLI Overrides
+
+Override configuration file parameters without editing the file:
+
+- `--models, -m` - Override models (comma-separated)
+  - Example: `--models LR,RF,XGB`
+- `--targets, -t` - Override targets (comma-separated)
+  - Example: `--targets Target1,Target2`
+- `--output, -o` - Override output folder
+  - Example: `--output ./new_results/`
+- `--seed, -s` - Override random seed
+  - Example: `--seed 123`
+
+**Examples with overrides:**
+
+```bash
+# Run with different models
+respredai run --config my_config.ini --models LR,RF
+
+# Run only specific targets with a different output folder
+respredai run --config my_config.ini --targets Target1 --output ./experiment1/
+
+# Quick experiment with different seed
+respredai run --config my_config.ini --seed 42 --quiet
+```
 
 ## Configuration File
 

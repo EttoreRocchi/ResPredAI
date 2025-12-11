@@ -141,6 +141,16 @@ Generate a template configuration file that you can edit for your data.
 
 📖 **[Detailed Documentation](docs/create-config-command.md)** - Complete guide to configuration file structure and customization.
 
+### Validate a configuration file
+
+```bash
+respredai validate-config <path_to_config.ini> [--check-data]
+```
+
+Validate a configuration file without running the pipeline. It can also check that the dataset load without errors.
+
+📖 **[Detailed Documentation](docs/validate-config-command.md)** - Complete guide to configuration file validation.
+
 ### Show information
 
 ```bash
@@ -207,6 +217,10 @@ If you use `ResPredAI` in your research, please cite:
 ## Funding
 
 This research was supported by EU funding within the NextGenerationEU-MUR PNRR Extended Partnership initiative on Emerging Infectious Diseases (Project no. PE00000007, INF-ACT).
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on setting up a development environment, running tests, and submitting pull requests.
 
 ## License
 
