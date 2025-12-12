@@ -2,6 +2,32 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.3.0] - 2025-12-12
+
+### Added
+- **`train` command** for model training on entire dataset (cross-dataset validation)
+  - Uses GridSearchCV for hyperparameter tuning (inner CV only)
+  - Saves one model file per model-target combination
+  - Exports `training_metadata.json` for evaluation compatibility
+- **`evaluate` command** to apply trained models to new data
+  - Validates new data columns against training metadata
+  - Outputs per-sample predictions with probabilities
+  - Calculates metrics against ground truth
+- **Automatic summary report** after `run` command
+  - Generates `summary.csv` per target and `summary_all.csv` globally
+  - Aggregates Mean±Std for all metrics across models
+- **SHAP-based feature importance** as fallback for models without native importance
+  - Supports MLP, RBF_SVC, and TabPFN via KernelExplainer
+  - Computes mean absolute SHAP values across CV test folds
+  - Output files have `_shap` suffix when SHAP is used
+  - `--seed` flag for reproducible SHAP computations
+
+### Documentation
+- Added `docs/train-command.md`
+- Added `docs/evaluate-command.md`
+- Updated `docs/feature-importance-command.md` with SHAP fallback details
+
+
 ## [1.2.0] - 2025-12-10
 
 ### Added
