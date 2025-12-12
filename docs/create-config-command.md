@@ -150,5 +150,7 @@ The folder will be created if it doesn't exist.
 
 ## See Also
 
-- [Run Command Documentation](run-command.md) - Execute the pipeline with your configuration
+- [Run Command](run-command.md) - Execute the nested CV pipeline
+- [Train Command](train-command.md) - Train models on entire dataset for cross-dataset validation
+- [Validate Config Command](validate-config-command.md) - Validate configuration before running
 - [Example Configuration](../example/config_example.ini) - Complete working example

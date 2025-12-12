@@ -44,5 +44,6 @@ All of the above, plus:
 
 ## See Also
 
-- [Run Command Documentation](run-command.md) - Execute the pipeline
-- [Create Config Command Documentation](create-config-command.md) - Generate template configs
+- [Run Command](run-command.md) - Execute the full pipeline with nested CV
+- [Train Command](train-command.md) - Train models on entire dataset for cross-dataset validation
+- [Create Config Command](create-config-command.md) - Generate template configs

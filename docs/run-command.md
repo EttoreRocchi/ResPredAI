@@ -219,9 +219,10 @@ output_folder/
 │   ├── {Model}_{Target}_models.joblib            # Saved models for resumption
 │   └── ...
 ├── metrics/                                      # Detailed metrics
-│   └── {target}/
-│       ├── {model}_metrics_detailed.csv          # Comprehensive metrics with CI
-│       └── ...
+│   ├── {target}/
+│   │   ├── {model}_metrics_detailed.csv          # Comprehensive metrics with CI
+│   │   └── summary.csv                           # Summary across all models for this target
+│   └── summary_all.csv                           # Global summary across all models and targets
 ├── confusion_matrices/                           # Confusion matrix heatmaps
 │   ├── Confusion_matrices_{model}.png
 │   └── ...
@@ -272,6 +273,8 @@ respredai run --config my_config.ini --quiet
 
 ## See Also
 
+- [Train Command](train-command.md) - Train models on entire dataset for cross-dataset validation
+- [Evaluate Command](evaluate-command.md) - Apply trained models to new data
 - [Feature Importance Command](feature-importance-command.md) - Extract and visualize feature importance
-- [Configuration Documentation](create-config-command.md) - How to create the configuration file
-- [Configuration Examples](../example/config_example.ini) - Example configuration file
+- [Validate Config Command](validate-config-command.md) - Validate configuration files
+- [Create Config Command](create-config-command.md) - How to create the configuration file
