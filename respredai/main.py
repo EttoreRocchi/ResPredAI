@@ -1,6 +1,9 @@
 """Main pipeline execution for ResPredAI."""
 
 import warnings
+import json
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -184,6 +187,62 @@ def save_metrics_summary(
     return summary_df
 
 
+def generate_summary_report(output_folder: str, models: list, targets: list) -> None:
+    """
+    Generate aggregated summary CSVs: one per target plus a global summary_all.csv.
+
+    Parameters
+    ----------
+    output_folder : str
+        Output folder path.
+    models : list
+        Model names.
+    targets : list
+        Target names.
+    """
+    metrics_dir = Path(output_folder) / "metrics"
+    all_summaries = []
+
+    for target in targets:
+        target_safe = target.replace(" ", "_")
+        target_dir = metrics_dir / target_safe
+        target_rows = []
+
+        for model in models:
+            model_safe = model.replace(" ", "_")
+            metrics_file = target_dir / f"{model_safe}_metrics_detailed.csv"
+
+            if not metrics_file.exists():
+                continue
+
+            df = pd.read_csv(metrics_file)
+            row = {"Model": model, "Target": target}
+
+            for _, metric_row in df.iterrows():
+                metric_name = metric_row["Metric"].replace(" ", "_").replace("(", "").replace(")", "")
+                mean_val = metric_row["Mean"]
+                std_val = metric_row["Std"]
+                row[metric_name] = f"{mean_val:.3f}±{std_val:.3f}"
+
+            target_rows.append(row)
+            all_summaries.append(row)
+
+        # Save per-target summary
+        if target_rows:
+            target_summary_df = pd.DataFrame(target_rows)
+            target_summary_df = target_summary_df.drop(columns=["Target"])
+            target_summary_path = target_dir / "summary.csv"
+            target_summary_df.to_csv(target_summary_path, index=False)
+
+    # Save global summary
+    if all_summaries:
+        all_summary_df = pd.DataFrame(all_summaries)
+        cols = ["Model", "Target"] + [c for c in all_summary_df.columns if c not in ["Model", "Target"]]
+        all_summary_df = all_summary_df[cols]
+        all_summary_path = metrics_dir / "summary_all.csv"
+        all_summary_df.to_csv(all_summary_path, index=False)
+
+
 def get_model_path(
     output_folder: str,
     model: str,
@@ -220,29 +279,32 @@ def save_models(
     metrics: dict,
     completed_folds: int,
     model_path: Path,
-    compression: int = 3
+    compression: int = 3,
+    fold_test_data: list = None
 ):
     """
-    Save trained models with all fold models, thresholds, hyperparameters, and metrics.
+    Save trained models with all fold data for feature importance (including SHAP).
 
     Parameters
     ----------
     fold_models : list
-        List of trained models (one per completed fold)
+        List of trained models (one per completed fold).
     fold_transformers : list
-        List of fitted transformers (one per completed fold)
+        List of fitted transformers (one per completed fold).
     fold_thresholds : list
-        List of calibrated thresholds (one per completed fold)
+        List of calibrated thresholds (one per completed fold).
     fold_hyperparams : list
-        List of best hyperparameters (one per completed fold)
+        List of best hyperparameters (one per completed fold).
     metrics : dict
-        Dictionary containing all metrics for this model-target
+        Dictionary containing all metrics for this model-target.
     completed_folds : int
-        Number of completed folds
+        Number of completed folds.
     model_path : Path
-        Path to save the model file
+        Path to save the model file.
     compression : int
-        Compression level (1-9)
+        Compression level (1-9).
+    fold_test_data : list, optional
+        List of (X_test_scaled, feature_names) tuples for SHAP computation.
     """
     model_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -253,7 +315,8 @@ def save_models(
         'fold_hyperparams': fold_hyperparams,
         'metrics': metrics,
         'completed_folds': completed_folds,
-        'timestamp': pd.Timestamp.now().isoformat()
+        'timestamp': pd.Timestamp.now().isoformat(),
+        'fold_test_data': fold_test_data
     }
 
     joblib.dump(model_data, model_path, compress=compression)
@@ -414,6 +477,7 @@ def perform_pipeline(
             fold_transformers = []
             fold_thresholds = []
             fold_hyperparams = []
+            fold_test_data = []
 
             if config_handler.save_models_enable and model_path.exists():
                 model_data = load_models(model_path)
@@ -445,6 +509,7 @@ def perform_pipeline(
                         fold_transformers = model_data.get('fold_transformers', [])
                         fold_thresholds = model_data.get('fold_thresholds', [])
                         fold_hyperparams = model_data.get('fold_hyperparams', [])
+                        fold_test_data = model_data.get('fold_test_data', [])
 
                         # Restore partial metrics
                         all_metrics[target] = model_data['metrics'].get('all_metrics', [])
@@ -639,6 +704,8 @@ def perform_pipeline(
                     fold_transformers.append(transformer)
                     fold_thresholds.append(best_threshold)
                     fold_hyperparams.append(best_params)
+                    # Store test data for SHAP computation (use transformed feature names)
+                    fold_test_data.append((X_test_scaled, list(transformer.get_feature_names_out())))
 
                     # Update progress for successful fold
                     if progress_callback:
@@ -671,6 +738,7 @@ def perform_pipeline(
                     fold_transformers.append(None)
                     fold_thresholds.append(None)
                     fold_hyperparams.append(None)
+                    fold_test_data.append(None)
 
                     if progress_callback:
                         progress_callback.complete_fold(i + 1, nan_metrics)
@@ -693,7 +761,8 @@ def perform_pipeline(
                         metrics=target_metrics,
                         completed_folds=i + 1,
                         model_path=model_path,
-                        compression=config_handler.model_compression
+                        compression=config_handler.model_compression,
+                        fold_test_data=fold_test_data
                     )
 
                     if config_handler.verbosity == 2:
@@ -773,7 +842,342 @@ def perform_pipeline(
     if progress_callback:
         progress_callback.stop()
 
+    # Generate summary reports
+    generate_summary_report(
+        output_folder=config_handler.out_folder,
+        models=config_handler.models,
+        targets=list(Y.columns)
+    )
+
     if config_handler.verbosity:
         config_handler.logger.info(
             "Analysis completed."
         )
+
+
+def perform_training(
+    datasetter: DataSetter,
+    models: List[str],
+    config_handler: ConfigHandler,
+    progress_callback: Optional[Any] = None
+) -> None:
+    """
+    Train models on entire dataset using GridSearchCV for hyperparameter tuning.
+
+    Trains each model-target combination on the full dataset and saves the best
+    model to disk for later use with perform_evaluation().
+
+    Parameters
+    ----------
+    datasetter : DataSetter
+        Data container with features (X), targets (Y), and optional groups.
+    models : List[str]
+        Model names to train (e.g., ['LR', 'RF', 'XGB']).
+    config_handler : ConfigHandler
+        Configuration handler with pipeline settings.
+    progress_callback : optional
+        Callback for progress updates (SimpleTrainingProgressCallback).
+    """
+    X = datasetter.X
+    Y = datasetter.Y
+
+    # One-hot encode categorical features
+    categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    continuous_features = config_handler.continuous_features
+
+    if categorical_features:
+        X = pd.get_dummies(X, columns=categorical_features, drop_first=True)
+
+    # Sanitize feature names for XGBoost
+    X.columns = [col.replace("<", "").replace(">", "") for col in X.columns]
+
+    # Determine features for scaling
+    if continuous_features:
+        numeric_cols_for_scaling = [c for c in continuous_features if c in X.columns]
+    else:
+        numeric_cols_for_scaling = X.select_dtypes(include=[np.number]).columns.tolist()
+
+    # Create output directories
+    trained_models_dir = Path(config_handler.out_folder) / "trained_models"
+    trained_models_dir.mkdir(parents=True, exist_ok=True)
+
+    # Store metadata for evaluation
+    metadata = {
+        "features": list(datasetter.X.columns),
+        "continuous_features": continuous_features if continuous_features else [],
+        "categorical_features": categorical_features,
+        "targets": list(Y.columns),
+        "feature_names_transformed": list(X.columns),
+        "feature_dtypes": {col: str(dtype) for col, dtype in datasetter.X.dtypes.items()},
+        "training_data_path": str(config_handler.data_path),
+        "training_timestamp": datetime.now().isoformat(),
+        "config": {
+            "inner_folds": config_handler.inner_folds,
+            "calibrate_threshold": config_handler.calibrate_threshold,
+            "threshold_method": config_handler.threshold_method if config_handler.calibrate_threshold else None,
+            "seed": config_handler.seed
+        }
+    }
+
+    if progress_callback:
+        total_tasks = len(models) * len(Y.columns)
+        progress_callback.start(total_models=len(models), total_targets=len(Y.columns), total_folds=1)
+
+    for model in models:
+        if progress_callback:
+            progress_callback.start_model(model)
+
+        for target in Y.columns:
+            if progress_callback:
+                progress_callback.start_target(target)
+
+            y = Y[target]
+
+            # Get pipeline components
+            transformer, grid = get_pipeline(
+                model_name=model,
+                continuous_cols=numeric_cols_for_scaling,
+                n_jobs=config_handler.n_jobs,
+                rnd_state=config_handler.seed,
+                inner_folds=config_handler.inner_folds,
+                use_groups=datasetter.groups is not None
+            )
+
+            # Scale features
+            X_scaled = transformer.fit_transform(X)
+
+            # Fit GridSearchCV on entire dataset
+            fit_params = {}
+            if datasetter.groups is not None:
+                fit_params['groups'] = datasetter.groups
+
+            grid.fit(X=X_scaled, y=y, **fit_params)
+
+            best_estimator = grid.best_estimator_
+            best_params = grid.best_params_
+
+            # Threshold calibration using OOF predictions
+            best_threshold = 0.5
+            if config_handler.calibrate_threshold:
+                threshold_method = config_handler.threshold_method
+                if threshold_method == "auto":
+                    threshold_method = "oof" if len(y) < 1000 else "cv"
+
+                if datasetter.groups is not None:
+                    inner_cv = StratifiedGroupKFold(
+                        n_splits=config_handler.inner_folds,
+                        shuffle=True,
+                        random_state=config_handler.seed
+                    )
+                    cv_fit_params = {'groups': datasetter.groups}
+                else:
+                    inner_cv = StratifiedKFold(
+                        n_splits=config_handler.inner_folds,
+                        shuffle=True,
+                        random_state=config_handler.seed
+                    )
+                    cv_fit_params = {}
+
+                # Get OOF predictions
+                y_pred_proba_oof = cross_val_predict(
+                    best_estimator,
+                    X_scaled,
+                    y,
+                    cv=inner_cv,
+                    method='predict_proba',
+                    **cv_fit_params
+                )[:, 1]
+
+                # Find optimal threshold using Youden's J
+                fpr, tpr, thresholds = roc_curve(y, y_pred_proba_oof)
+                youden_j = tpr - fpr
+                best_idx = np.argmax(youden_j)
+                best_threshold = thresholds[best_idx]
+
+            # Save model bundle
+            model_bundle = {
+                "model": best_estimator,
+                "transformer": transformer,
+                "threshold": best_threshold,
+                "hyperparams": best_params,
+                "feature_names": list(datasetter.X.columns),
+                "feature_names_transformed": list(X.columns),
+                "target_name": target,
+                "model_name": model,
+                "training_timestamp": datetime.now().isoformat()
+            }
+
+            model_safe = model.replace(" ", "_")
+            target_safe = target.replace(" ", "_")
+            model_path = trained_models_dir / f"{model_safe}_{target_safe}.joblib"
+            joblib.dump(model_bundle, model_path, compress=3)
+
+            if config_handler.verbosity:
+                config_handler.logger.info(f"Saved trained model: {model_path}")
+
+            if progress_callback:
+                progress_callback.complete_target(target, {"threshold": best_threshold})
+
+        if progress_callback:
+            progress_callback.complete_model(model)
+
+    # Save metadata
+    metadata_path = trained_models_dir / "training_metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    if progress_callback:
+        progress_callback.stop()
+
+    if config_handler.verbosity:
+        config_handler.logger.info("Training completed.")
+
+
+def perform_evaluation(
+    models_dir: Path,
+    data_path: Path,
+    output_dir: Path,
+    verbose: bool = True
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Evaluate trained models on new data with ground truth.
+
+    Applies models trained with perform_training() to new data and computes
+    performance metrics against known labels.
+
+    Parameters
+    ----------
+    models_dir : Path
+        Directory containing trained model files and training_metadata.json.
+    data_path : Path
+        Path to new data CSV file (must include target columns for ground truth).
+    output_dir : Path
+        Directory to save evaluation results.
+    verbose : bool
+        Print progress messages (default: True).
+
+    Returns
+    -------
+    Dict[str, Dict[str, Any]]
+        Evaluation results keyed by 'model_target' with metrics dictionary.
+    """
+    # Load training metadata
+    metadata_path = models_dir / "training_metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Training metadata not found: {metadata_path}")
+
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+    # Load new data
+    new_data = pd.read_csv(data_path)
+
+    # Validate columns
+    required_features = metadata["features"]
+    required_targets = metadata["targets"]
+
+    missing_features = set(required_features) - set(new_data.columns)
+    if missing_features:
+        raise ValueError(f"Missing feature columns: {missing_features}")
+
+    missing_targets = set(required_targets) - set(new_data.columns)
+    if missing_targets:
+        raise ValueError(f"Missing target columns (ground truth required): {missing_targets}")
+
+    # Extract features and targets
+    X_new = new_data[required_features].copy()
+    Y_new = new_data[required_targets].copy()
+
+    # One-hot encode categorical features (same as training)
+    categorical_features = metadata["categorical_features"]
+    if categorical_features:
+        X_new = pd.get_dummies(X_new, columns=categorical_features, drop_first=True)
+
+    # Sanitize feature names
+    X_new.columns = [col.replace("<", "").replace(">", "") for col in X_new.columns]
+
+    # Align columns with training (add missing dummy columns as 0, remove extra)
+    expected_features = metadata["feature_names_transformed"]
+    for col in expected_features:
+        if col not in X_new.columns:
+            X_new[col] = 0
+    X_new = X_new[expected_features]
+
+    # Create output directories
+    output_dir = Path(output_dir)
+    metrics_dir = output_dir / "metrics"
+    predictions_dir = output_dir / "predictions"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find model files
+    model_files = list(models_dir.glob("*.joblib"))
+    if not model_files:
+        raise FileNotFoundError(f"No model files found in {models_dir}")
+
+    results = {}
+    all_summaries = []
+
+    for model_file in model_files:
+        bundle = joblib.load(model_file)
+
+        model_name = bundle["model_name"]
+        target_name = bundle["target_name"]
+        model = bundle["model"]
+        transformer = bundle["transformer"]
+        threshold = bundle["threshold"]
+
+        if target_name not in Y_new.columns:
+            continue
+
+        y_true = Y_new[target_name].values
+
+        # Scale features
+        X_scaled = transformer.transform(X_new)
+
+        # Predict
+        y_prob = model.predict_proba(X_scaled)
+        y_pred = (y_prob[:, 1] >= threshold).astype(int)
+
+        # Calculate metrics
+        metrics = metric_dict(y_true=y_true, y_pred=y_pred, y_prob=y_prob)
+        results[f"{model_name}_{target_name}"] = metrics
+
+        # Save predictions
+        model_safe = model_name.replace(" ", "_")
+        target_safe = target_name.replace(" ", "_")
+
+        pred_df = pd.DataFrame({
+            "sample_id": range(len(y_true)),
+            "y_true": y_true,
+            "y_pred": y_pred,
+            "y_prob": y_prob[:, 1]
+        })
+        pred_path = predictions_dir / f"{model_safe}_{target_safe}_predictions.csv"
+        pred_df.to_csv(pred_path, index=False)
+
+        # Save metrics
+        target_metrics_dir = metrics_dir / target_safe
+        target_metrics_dir.mkdir(parents=True, exist_ok=True)
+
+        metrics_df = pd.DataFrame([
+            {"Metric": k, "Value": v} for k, v in metrics.items()
+        ])
+        metrics_path = target_metrics_dir / f"{model_safe}_metrics.csv"
+        metrics_df.to_csv(metrics_path, index=False)
+
+        # Collect for summary
+        row = {"Model": model_name, "Target": target_name}
+        row.update(metrics)
+        all_summaries.append(row)
+
+        if verbose:
+            print(f"Evaluated {model_name} on {target_name}: F1={metrics['F1 (weighted)']:.3f}, MCC={metrics['MCC']:.3f}")
+
+    # Save evaluation summary
+    if all_summaries:
+        summary_df = pd.DataFrame(all_summaries)
+        summary_path = output_dir / "evaluation_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+
+    return results
