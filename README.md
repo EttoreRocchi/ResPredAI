@@ -97,13 +97,33 @@ Train models using nested cross-validation with the specified configuration.
 
 📖 **[Detailed Documentation](docs/run-command.md)** - Complete guide with all configuration options and workflow details.
 
+### Train models for cross-dataset validation
+
+```bash
+respredai train --config path/to/config.ini [--models LR,RF] [--output ./trained/]
+```
+
+Train models on the entire dataset using GridSearchCV for hyperparameter tuning. Saves one model file per model-target combination for later use with `evaluate`.
+
+📖 **[Detailed Documentation](docs/train-command.md)** - Complete guide with output structure and workflow.
+
+### Evaluate on new data
+
+```bash
+respredai evaluate --models-dir ./output/trained_models --data new_data.csv --output ./eval/
+```
+
+Apply trained models to new data with ground truth. Outputs predictions and metrics.
+
+📖 **[Detailed Documentation](docs/evaluate-command.md)** - Complete guide with data requirements and output format.
+
 ### Extract feature importance
 
 ```bash
 respredai feature-importance --output <output_folder> --model <model_name> --target <target_name> [--top-n 20]
 ```
 
-Extract and visualize feature importance/coefficients from trained models across all outer cross-validation iterations.
+Extract and visualize feature importance/coefficients from trained models across all outer cross-validation iterations. Uses SHAP as fallback for models without native feature importance.
 
 📖 **[Detailed Documentation](docs/feature-importance-command.md)** - Complete guide with interpretation, examples, and statistical considerations.
 
@@ -181,9 +201,14 @@ The pipeline generates:
 output_folder/
 ├── models/                                         # Trained models (if model saving enabled)
 │   └── {Model}_{Target}_models.joblib
+├── trained_models/                                 # Models for cross-dataset validation (from train command)
+│   ├── {Model}_{Target}.joblib
+│   └── training_metadata.json
 ├── metrics/                                        # Detailed performance metrics
-│   └── {target_name}/
-│       └── {model_name}_metrics_detailed.csv
+│   ├── {target_name}/
+│   │   ├── {model_name}_metrics_detailed.csv
+│   │   └── summary.csv                            # Summary across all models
+│   └── summary_all.csv                            # Global summary
 ├── feature_importance/                             # Feature importance (if extracted)
 │   └── {target_name}/
 │       ├── {model_name}_feature_importance.csv    # Importance values
