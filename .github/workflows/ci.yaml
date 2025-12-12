@@ -33,6 +33,7 @@ jobs:
     - name: Install package and test dependencies
       run: |
         pip install --upgrade pip
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
         pip install .[dev]
 
     - name: Run unit tests
