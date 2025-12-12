@@ -3,15 +3,35 @@
 import os
 from configparser import ConfigParser
 import logging
-from typing import Iterable
+from typing import Iterable, List, Optional
 
+import numpy as np
 import pandas as pd
 
 
 class ConfigHandler:
     """Handle configuration file parsing and validation."""
 
-    def __init__(self, config_path: str):
+    config_path: str
+    data_path: str
+    targets: List[str]
+    continuous_features: List[str]
+    group_column: Optional[str]
+    models: List[str]
+    outer_folds: int
+    inner_folds: int
+    calibrate_threshold: bool
+    threshold_method: str
+    seed: int
+    verbosity: int
+    log_basename: str
+    n_jobs: int
+    out_folder: str
+    save_models_enable: bool
+    model_compression: int
+    logger: Optional[logging.Logger]
+
+    def __init__(self, config_path: str) -> None:
         """
         Initialize configuration handler.
 
@@ -21,6 +41,7 @@ class ConfigHandler:
             Path to the configuration file (.ini format)
         """
         self.config_path = config_path
+        self.logger = None
         self._setup_config()
         if self.verbosity:
             self.logger = self._setup_logger(
@@ -107,7 +128,14 @@ class ConfigHandler:
 class DataSetter:
     """Handle data loading and validation."""
 
-    def __init__(self, config_handler: ConfigHandler):
+    data: pd.DataFrame
+    X: pd.DataFrame
+    Y: pd.DataFrame
+    targets: List[str]
+    continuous_features: List[str]
+    groups: Optional[np.ndarray]
+
+    def __init__(self, config_handler: ConfigHandler) -> None:
         """
         Initialize data setter.
 

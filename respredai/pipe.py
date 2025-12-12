@@ -1,5 +1,7 @@
 """Pipeline creation for different machine learning models."""
 
+from typing import List, Literal, Tuple
+
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -14,18 +16,17 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold, StratifiedGro
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
 
-from typing import Literal
 from .params import PARAM_GRID
 
 
 def get_pipeline(
     model_name: Literal["LR", "XGB", "RF", "MLP", "CatBoost", "TabPFN", "RBF_SVC", "Linear_SVC"],
-    continuous_cols: list,
+    continuous_cols: List[str],
     inner_folds: int,
     n_jobs: int,
     rnd_state: int,
     use_groups: bool = False
-) -> tuple[ColumnTransformer, GridSearchCV]:
+) -> Tuple[ColumnTransformer, GridSearchCV]:
     """Get the sklearn pipeline with transformer and grid search.
 
     Parameters

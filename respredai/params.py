@@ -1,8 +1,10 @@
 """Parameter grids for hyperparameter tuning."""
 
+from typing import Dict, List, Union
+
 import numpy as np
 
-PARAM_GRID = {
+PARAM_GRID: Dict[str, Union[Dict, List[Dict]]] = {
     "LR": [
         {
             "penalty": [None],
