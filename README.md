@@ -2,8 +2,10 @@
 
 ## Antimicrobial resistance predictions via artificial intelligence models
 
+[![Latest](https://img.shields.io/github/v/release/EttoreRocchi/ResPredAI?label=latest)](https://github.com/EttoreRocchi/ResPredAI/releases)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 ![CI](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/ci.yaml/badge.svg)
+![Docs](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/docs.yaml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Implementation of the pipeline described in:
@@ -103,7 +105,7 @@ respredai run --config path/to/config.ini [--quiet]
 
 Train models using nested cross-validation with the specified configuration.
 
-📖 **[Detailed Documentation](docs/run-command.md)** - Complete guide with all configuration options and workflow details.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/run-command/)** - Complete guide with all configuration options and workflow details.
 
 ### Train models for cross-dataset validation
 
@@ -113,7 +115,7 @@ respredai train --config path/to/config.ini [--models LR,RF] [--output ./trained
 
 Train models on the entire dataset using GridSearchCV for hyperparameter tuning. Saves one model file per model-target combination for later use with `evaluate`.
 
-📖 **[Detailed Documentation](docs/train-command.md)** - Complete guide with output structure and workflow.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/train-command/)** - Complete guide with output structure and workflow.
 
 ### Evaluate on new data
 
@@ -123,7 +125,7 @@ respredai evaluate --models-dir ./output/trained_models --data new_data.csv --ou
 
 Apply trained models to new data with ground truth. Outputs predictions and metrics.
 
-📖 **[Detailed Documentation](docs/evaluate-command.md)** - Complete guide with data requirements and output format.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/evaluate-command/)** - Complete guide with data requirements and output format.
 
 ### Extract feature importance
 
@@ -133,7 +135,7 @@ respredai feature-importance --output <output_folder> --model <model_name> --tar
 
 Extract and visualize feature importance/coefficients from trained models across all outer cross-validation iterations. Uses SHAP as fallback for models without native feature importance.
 
-📖 **[Detailed Documentation](docs/feature-importance-command.md)** - Complete guide with interpretation, examples, and statistical considerations.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/feature-importance-command/)** - Complete guide with interpretation, examples, and statistical considerations.
 
 ### List available models
 
@@ -167,7 +169,7 @@ respredai create-config output_path.ini
 
 Generate a template configuration file that you can edit for your data.
 
-📖 **[Detailed Documentation](docs/create-config-command.md)** - Complete guide to configuration file structure and customization.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/create-config-command/)** - Complete guide to configuration file structure and customization.
 
 ### Validate a configuration file
 
@@ -177,7 +179,7 @@ respredai validate-config <path_to_config.ini> [--check-data]
 
 Validate a configuration file without running the pipeline. It can also check that the dataset load without errors.
 
-📖 **[Detailed Documentation](docs/validate-config-command.md)** - Complete guide to configuration file validation.
+📖 **[Detailed Documentation](https://ettorerocchi.github.io/ResPredAI/cli-reference/validate-config-command/)** - Complete guide to configuration file validation.
 
 ### Show information
 
