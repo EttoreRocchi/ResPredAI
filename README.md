@@ -11,7 +11,15 @@ Implementation of the pipeline described in:
 > Bonazzetti, C., Rocchi, E., Toschi, A. _et al._ Artificial Intelligence model to predict resistances in Gram-negative bloodstream infections. _npj Digit. Med._ **8**, 319 (2025). https://doi.org/10.1038/s41746-025-01696-x
 
 <p align="center">
-  <img src="docs/logo_ResPredAI.png" alt="ResPredAI Logo" width="350"/>
+  <img src="docs/assets/logo_ResPredAI.png" alt="ResPredAI Logo" width="350"/>
+</p>
+
+<p align="center">
+  <strong><a href="https://ettorerocchi.github.io/ResPredAI/">Documentation</a></strong> |
+  <strong><a href="#installation">Installation</a></strong> |
+  <strong><a href="#quick-start">Quick Start</a></strong> |
+  <strong><a href="#cli-commands">CLI Commands</a></strong> |
+  <strong><a href="#citation">Citation</a></strong>
 </p>
 
 ## Installation

@@ -2,6 +2,18 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.3.1] - 2025-01-08
+
+### Changed
+- **Reorganized package structure** into sub-packages for clarity:
+  - `respredai/core/` - Pipeline, metrics, models, and ML utilities
+  - `respredai/io/` - Configuration and data handling
+  - `respredai/visualization/` - Plotting and visualization
+
+### Documentation
+- Created `docs/` structure with **MkDocs**
+
+
 ## [1.3.0] - 2025-12-12
 
 ### Added
