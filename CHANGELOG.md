@@ -2,7 +2,7 @@
 
 All changes to ResPredAI are documented in this file.
 
-## [1.3.1] - 2025-01-08
+## [1.3.1] - 2026-01-08
 
 ### Changed
 - **Reorganized package structure** into sub-packages for clarity:
