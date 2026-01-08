@@ -1,0 +1,74 @@
+site_name: ResPredAI
+site_description: Antimicrobial Resistance Prediction via AI
+site_author: Ettore Rocchi
+site_url: https://ettorerocchi.github.io/ResPredAI/
+
+repo_name: EttoreRocchi/ResPredAI
+repo_url: https://github.com/EttoreRocchi/ResPredAI
+
+theme:
+  name: material
+  logo: assets/logo_ResPredAI.png
+  favicon: assets/logo_ResPredAI.png
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - CLI Reference:
+    - Overview: cli-reference/index.md
+    - run: cli-reference/run-command.md
+    - train: cli-reference/train-command.md
+    - evaluate: cli-reference/evaluate-command.md
+    - feature-importance: cli-reference/feature-importance-command.md
+    - create-config: cli-reference/create-config-command.md
+    - validate-config: cli-reference/validate-config-command.md
+  - Changelog: changelog.md
+  - Contributing: contributing.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/EttoreRocchi/ResPredAI
