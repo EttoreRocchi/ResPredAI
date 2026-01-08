@@ -1,12 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from respredai.main import (
-    generate_summary_report,
-    metric_dict,
-    bootstrap_ci,
-    save_metrics_summary,
-)
+from respredai.core.metrics import metric_dict, bootstrap_ci, save_metrics_summary
+from respredai.core.models import generate_summary_report
 
 
 class TestMetricDict:

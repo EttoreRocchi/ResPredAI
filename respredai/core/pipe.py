@@ -16,7 +16,7 @@ from sklearn.model_selection import GridSearchCV, StratifiedKFold, StratifiedGro
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
 
-from .params import PARAM_GRID
+from respredai.core.params import PARAM_GRID
 
 
 def get_pipeline(

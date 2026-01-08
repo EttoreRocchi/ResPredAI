@@ -1,6 +1,6 @@
 import pytest
 from textwrap import dedent
-from respredai.utils import ConfigHandler
+from respredai.io.config import ConfigHandler
 
 class TestConfigHandler:
     """Unit tests for ConfigHandler."""

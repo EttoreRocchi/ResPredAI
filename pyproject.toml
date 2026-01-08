@@ -38,6 +38,10 @@ respredai = "respredai.cli:main"
 dev = [
     "pytest>=8.0.0",
 ]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "respredai.__version__"}
@@ -47,7 +51,7 @@ dependencies = {file = ["requirements.txt"]}
 "Homepage" = "https://github.com/EttoreRocchi/ResPredAI"
 "Bug Reports" = "https://github.com/EttoreRocchi/ResPredAI/issues"
 "Source" = "https://github.com/EttoreRocchi/ResPredAI"
-"Documentation" = "https://github.com/EttoreRocchi/ResPredAI/blob/main/README.md"
+"Documentation" = "https://ettorerocchi.github.io/ResPredAI/"
 
 [tool.setuptools.packages.find]
 where = ["."]

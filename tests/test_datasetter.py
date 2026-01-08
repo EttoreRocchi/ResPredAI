@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 from textwrap import dedent
-from respredai.utils import ConfigHandler, DataSetter
+from respredai.io.config import ConfigHandler, DataSetter
 
 class TestDataSetter:
     """Unit tests for DataSetter."""

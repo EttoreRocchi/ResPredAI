@@ -14,11 +14,11 @@ from rich.progress import (
 )
 from pathlib import Path
 from typing import Optional, Dict, Any
-from .__init__ import __version__
+from respredai import __version__
 
-from .main import perform_pipeline, perform_training, perform_evaluation
-from .utils import ConfigHandler, DataSetter
-from .feature_importance import process_feature_importance
+from respredai.core.pipeline import perform_pipeline, perform_training, perform_evaluation
+from respredai.io.config import ConfigHandler, DataSetter
+from respredai.visualization.feature_importance import process_feature_importance
 
 app = typer.Typer(
     name="respredai",

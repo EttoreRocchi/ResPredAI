@@ -388,7 +388,7 @@ def process_feature_importance(
     tuple or None
         (DataFrame with feature importances, method used) or None if not available.
     """
-    from .main import get_model_path
+    from respredai.core.models import get_model_path
 
     model_path = get_model_path(output_folder, model, target)
 
