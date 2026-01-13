@@ -17,6 +17,7 @@ Implementation of the pipeline described in:
 </p>
 
 <p align="center">
+  <strong><a href="https://ettorerocchi.github.io/respredai-website/">Website</a></strong> |
   <strong><a href="https://ettorerocchi.github.io/ResPredAI/">Documentation</a></strong> |
   <strong><a href="#installation">Installation</a></strong> |
   <strong><a href="#quick-start">Quick Start</a></strong> |
@@ -24,26 +25,37 @@ Implementation of the pipeline described in:
   <strong><a href="#citation">Citation</a></strong>
 </p>
 
+## Links
+
+- **[Project Website](https://ettorerocchi.github.io/respredai-website/)** - Overview of the project, original paper, and related work
+- **[Documentation](https://ettorerocchi.github.io/ResPredAI/)** - Installation guides, CLI reference, tutorials, and API documentation
+
 ## Installation
 
+Install from PyPI:
+
 ```bash
-# Clone the repository
+pip install respredai
+```
+
+Or install from source:
+
+```bash
 git clone https://github.com/EttoreRocchi/ResPredAI.git
 cd ResPredAI
-
-# Install
 pip install .
+
+# For development (includes pytest)
+pip install -e ".[dev]"
 ```
 
 ## Testing the Installation
 
-Test with the included example:
+Verify the installation:
 
 ```bash
-respredai run --config example/config_example.ini
+respredai --version
 ```
-
-This runs the pipeline on a synthetic dataset. Results will be in `./out_run_example/`.
 
 ## Quick Start
 
