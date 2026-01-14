@@ -2,6 +2,23 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.4.0] - 2026-01-14
+
+### Added
+- **K-Nearest Neighbors (KNN) classifier** support
+- **Missing data imputation** with configurable methods:
+  - `SimpleImputer` (`mean`, `median`, `most_frequent` strategies)
+  - `KNNImputer` for k-nearest neighbors imputation
+  - `IterativeImputer` with `BayesianRidge` or `RandomForest` estimator
+- **Comprehensive HTML report** generation with metadata run and framework summary tables, results tables with 95% confidence intervals and confusion matrices
+- **Ruff linter** integration in CI workflow for code quality
+
+### Changed
+- **Bootstrap confidence intervals** now use sample-level predictions instead of fold-level metrics for more reliable statistical inference
+- Updated CI workflow to include lint checks before tests
+- Added Python 3.13 to CI test matrix
+
+
 ## [1.3.1] - 2026-01-08
 
 ### Changed

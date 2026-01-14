@@ -1,12 +1,13 @@
 """Feature importance and coefficient extraction for ResPredAI models."""
 
+import warnings
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
-from typing import Optional, List, Tuple
-import joblib
-import warnings
 import shap
 
 
@@ -24,7 +25,7 @@ def has_feature_importance(model) -> bool:
     bool
         True if model has `feature_importances_` or `coef_` attribute.
     """
-    return hasattr(model, 'feature_importances_') or hasattr(model, 'coef_')
+    return hasattr(model, "feature_importances_") or hasattr(model, "coef_")
 
 
 def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Series]:
@@ -47,9 +48,9 @@ def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Serie
     if model is None:
         return None
 
-    if hasattr(model, 'feature_importances_'):
+    if hasattr(model, "feature_importances_"):
         importances = model.feature_importances_
-    elif hasattr(model, 'coef_'):
+    elif hasattr(model, "coef_"):
         coef = model.coef_
         if len(coef.shape) > 1:
             coef = coef[0]
@@ -65,7 +66,7 @@ def compute_shap_importance(
     X_test: np.ndarray,
     feature_names: List[str],
     background_size: int = 100,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
 ) -> Optional[pd.Series]:
     """
     Compute SHAP values for a model on test data.
@@ -118,10 +119,7 @@ def compute_shap_importance(
 
 
 def extract_feature_importance_from_models(
-    model_path: Path,
-    top_n: Optional[int] = None,
-    use_shap: bool = True,
-    seed: Optional[int] = None
+    model_path: Path, top_n: Optional[int] = None, use_shap: bool = True, seed: Optional[int] = None
 ) -> Optional[Tuple[pd.DataFrame, List[str], str]]:
     """
     Extract feature importance from a saved model file.
@@ -155,8 +153,8 @@ def extract_feature_importance_from_models(
         warnings.warn(f"Failed to load model from {model_path}: {str(e)}")
         return None
 
-    fold_models = model_data.get('fold_models', [])
-    fold_test_data = model_data.get('fold_test_data', [])
+    fold_models = model_data.get("fold_models", [])
+    fold_test_data = model_data.get("fold_test_data", [])
 
     if not fold_models:
         warnings.warn(f"No models found in file: {model_path}")
@@ -168,11 +166,14 @@ def extract_feature_importance_from_models(
 
     # Try native feature importance first
     if has_feature_importance(first_model):
-        if hasattr(first_model, 'feature_names_in_'):
+        if hasattr(first_model, "feature_names_in_"):
             feature_names = first_model.feature_names_in_.tolist()
         else:
-            n_features = (first_model.coef_.shape[1] if hasattr(first_model, 'coef_')
-                         else len(first_model.feature_importances_))
+            n_features = (
+                first_model.coef_.shape[1]
+                if hasattr(first_model, "coef_")
+                else len(first_model.feature_importances_)
+            )
             feature_names = [f"feature_{i}" for i in range(n_features)]
 
         importances_list = []
@@ -205,7 +206,7 @@ def extract_feature_importance_from_models(
 
             X_test, _ = test_data
             # Get feature names from model (more reliable than stored names)
-            if hasattr(model, 'feature_names_in_'):
+            if hasattr(model, "feature_names_in_"):
                 feat_names = list(model.feature_names_in_)
             else:
                 feat_names = [f"feature_{i}" for i in range(X_test.shape[1])]
@@ -240,7 +241,7 @@ def plot_feature_importance(
     output_path: Path,
     top_n: int = 20,
     figsize: Tuple[int, int] = (10, 8),
-    method: str = "native"
+    method: str = "native",
 ):
     """
     Create a barplot of feature importance with error bars.
@@ -276,40 +277,48 @@ def plot_feature_importance(
     y_pos = np.arange(len(top_features))
 
     if method == "shap":
-        colors = ['darkorange'] * len(top_features)
-        xlabel = 'Mean |SHAP value| (mean ± std)'
+        colors = ["darkorange"] * len(top_features)
+        xlabel = "Mean |SHAP value| (mean ± std)"
         title_suffix = "(SHAP)"
     else:
         has_negative = (top_features.values < 0).any()
         if has_negative:
-            colors = ['firebrick' if val >= 0 else 'seagreen' for val in top_features.values]
+            colors = ["firebrick" if val >= 0 else "seagreen" for val in top_features.values]
         else:
-            colors = ['cornflowerblue'] * len(top_features)
-        xlabel = 'Importance (mean ± std)'
+            colors = ["cornflowerblue"] * len(top_features)
+        xlabel = "Importance (mean ± std)"
         title_suffix = ""
 
-    ax.barh(y_pos, top_features.values, xerr=top_std.values,
-            align='center', alpha=0.7, ecolor='black', capsize=5, color=colors)
+    ax.barh(
+        y_pos,
+        top_features.values,
+        xerr=top_std.values,
+        align="center",
+        alpha=0.7,
+        ecolor="black",
+        capsize=5,
+        color=colors,
+    )
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(top_features.index)
     ax.invert_yaxis()
     ax.set_xlabel(xlabel)
-    ax.set_title(f'Top {top_n} Feature Importance {title_suffix}\nModel: {model_name} | Target: {target_name}')
-    ax.grid(axis='x', alpha=0.3)
-    ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+    ax.set_title(
+        f"Top {top_n} Feature Importance {title_suffix}\nModel: {model_name} | Target: {target_name}"
+    )
+    ax.grid(axis="x", alpha=0.3)
+    ax.axvline(x=0, color="black", linestyle="-", linewidth=0.8)
 
     plt.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
 def save_feature_importance_csv(
-    importances_df: pd.DataFrame,
-    output_path: Path,
-    method: str = "native"
+    importances_df: pd.DataFrame, output_path: Path, method: str = "native"
 ):
     """
     Save feature importance to CSV with mean and std.
@@ -328,22 +337,26 @@ def save_feature_importance_csv(
     abs_mean_importance = mean_importance.abs()
 
     if method == "shap":
-        summary_df = pd.DataFrame({
-            'Feature': importances_df.columns,
-            'Mean_Abs_SHAP': mean_importance.values,
-            'Std_Abs_SHAP': std_importance.values,
-            'Mean±Std': [f"{m:.4f} ± {s:.4f}" for m, s in zip(mean_importance, std_importance)]
-        })
-        summary_df = summary_df.sort_values('Mean_Abs_SHAP', ascending=False)
+        summary_df = pd.DataFrame(
+            {
+                "Feature": importances_df.columns,
+                "Mean_Abs_SHAP": mean_importance.values,
+                "Std_Abs_SHAP": std_importance.values,
+                "Mean±Std": [f"{m:.4f} ± {s:.4f}" for m, s in zip(mean_importance, std_importance)],
+            }
+        )
+        summary_df = summary_df.sort_values("Mean_Abs_SHAP", ascending=False)
     else:
-        summary_df = pd.DataFrame({
-            'Feature': importances_df.columns,
-            'Mean_Importance': mean_importance.values,
-            'Std_Importance': std_importance.values,
-            'Abs_Mean_Importance': abs_mean_importance.values,
-            'Mean±Std': [f"{m:.4f} ± {s:.4f}" for m, s in zip(mean_importance, std_importance)]
-        })
-        summary_df = summary_df.sort_values('Abs_Mean_Importance', ascending=False)
+        summary_df = pd.DataFrame(
+            {
+                "Feature": importances_df.columns,
+                "Mean_Importance": mean_importance.values,
+                "Std_Importance": std_importance.values,
+                "Abs_Mean_Importance": abs_mean_importance.values,
+                "Mean±Std": [f"{m:.4f} ± {s:.4f}" for m, s in zip(mean_importance, std_importance)],
+            }
+        )
+        summary_df = summary_df.sort_values("Abs_Mean_Importance", ascending=False)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(output_path, index=False)
@@ -357,7 +370,7 @@ def process_feature_importance(
     save_plot: bool = True,
     save_csv: bool = True,
     use_shap: bool = True,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
 ) -> Optional[Tuple[pd.DataFrame, str]]:
     """
     Process feature importance for a model-target combination.
@@ -392,7 +405,9 @@ def process_feature_importance(
 
     model_path = get_model_path(output_folder, model, target)
 
-    result = extract_feature_importance_from_models(model_path, top_n=None, use_shap=use_shap, seed=seed)
+    result = extract_feature_importance_from_models(
+        model_path, top_n=None, use_shap=use_shap, seed=seed
+    )
 
     if result is None:
         warnings.warn(f"Feature importance not available for {model} - {target}.")
@@ -406,18 +421,28 @@ def process_feature_importance(
     suffix = "_shap" if method == "shap" else ""
 
     if save_csv:
-        csv_path = Path(output_folder) / "feature_importance" / target_safe / f"{model_safe}_feature_importance{suffix}.csv"
+        csv_path = (
+            Path(output_folder)
+            / "feature_importance"
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}.csv"
+        )
         save_feature_importance_csv(importances_df, csv_path, method=method)
 
     if save_plot:
-        plot_path = Path(output_folder) / "feature_importance" / target_safe / f"{model_safe}_feature_importance{suffix}.png"
+        plot_path = (
+            Path(output_folder)
+            / "feature_importance"
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}.png"
+        )
         plot_feature_importance(
             importances_df=importances_df,
             model_name=model,
             target_name=target,
             output_path=plot_path,
             top_n=top_n,
-            method=method
+            method=method,
         )
 
     return importances_df, method

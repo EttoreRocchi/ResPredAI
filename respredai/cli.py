@@ -1,22 +1,23 @@
 """Command-line interface for ResPredAI."""
 
+from pathlib import Path
+from typing import Any, Dict, Optional
+
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
-    TimeRemainingColumn
+    TextColumn,
+    TimeRemainingColumn,
 )
-from pathlib import Path
-from typing import Optional, Dict, Any
-from respredai import __version__
+from rich.table import Table
 
-from respredai.core.pipeline import perform_pipeline, perform_training, perform_evaluation
+from respredai import __version__
+from respredai.core.pipeline import perform_evaluation, perform_pipeline, perform_training
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.feature_importance import process_feature_importance
 
@@ -46,7 +47,9 @@ def print_config_info(config_handler: ConfigHandler) -> None:
 
     table.add_row("Data Path", str(config_handler.data_path))
     table.add_row("Targets", ", ".join(config_handler.targets))
-    table.add_row("Group Column", str(config_handler.group_column) if config_handler.group_column else "None")
+    table.add_row(
+        "Group Column", str(config_handler.group_column) if config_handler.group_column else "None"
+    )
     table.add_row("Models", ", ".join(config_handler.models))
     table.add_row("Outer Folds", str(config_handler.outer_folds))
     table.add_row("Inner Folds", str(config_handler.inner_folds))
@@ -77,7 +80,7 @@ def callback(
         help="Show version and exit.",
         callback=version_callback,
         is_eager=True,
-    )
+    ),
 ):
     """
     ResPredAI - Antimicrobial Resistance Prediction via AI
@@ -111,12 +114,10 @@ class TrainingProgressCallback:
             BarColumn(),
             TaskProgressColumn(),
             TimeRemainingColumn(),
-            console=self.console
+            console=self.console,
         )
         self.progress.start()
-        self.overall_task = self.progress.add_task(
-            "[cyan]Overall Progress", total=total_work
-        )
+        self.overall_task = self.progress.add_task("[cyan]Overall Progress", total=total_work)
 
     def start_model(self, model_name: str, total_work: int) -> None:
         """Start tracking a new model."""
@@ -126,9 +127,7 @@ class TrainingProgressCallback:
         if self.model_task is not None:
             self.progress.remove_task(self.model_task)
 
-        self.model_task = self.progress.add_task(
-            f"[green]Model: {model_name}", total=total_work
-        )
+        self.model_task = self.progress.add_task(f"[green]Model: {model_name}", total=total_work)
 
     def start_target(self, target_name: str, total_folds: int, resumed_from: int = 0) -> None:
         """Start tracking a new target."""
@@ -202,8 +201,12 @@ class TrainingProgressCallback:
         self.console.print(f"\n  [bold green]✓[/bold green] Completed {target_name}")
         summary_str = "    "
         summary_str += f"F1={summary_metrics.get('F1 (weighted)', 0):.3f}±{summary_metrics.get('F1_std', 0):.3f}, "
-        summary_str += f"MCC={summary_metrics.get('MCC', 0):.3f}±{summary_metrics.get('MCC_std', 0):.3f}, "
-        summary_str += f"AUROC={summary_metrics.get('AUROC', 0):.3f}±{summary_metrics.get('AUROC_std', 0):.3f}"
+        summary_str += (
+            f"MCC={summary_metrics.get('MCC', 0):.3f}±{summary_metrics.get('MCC_std', 0):.3f}, "
+        )
+        summary_str += (
+            f"AUROC={summary_metrics.get('AUROC', 0):.3f}±{summary_metrics.get('AUROC_std', 0):.3f}"
+        )
         self.console.print(f"[cyan]{summary_str}[/cyan]\n")
 
     def complete_model(self, model_name: str) -> None:
@@ -265,12 +268,7 @@ class SimpleTrainingProgressCallback:
         self.model_task: Optional[int] = None
         self.target_task: Optional[int] = None
 
-    def start(
-        self,
-        total_models: int,
-        total_targets: int,
-        total_folds: int = 1
-    ) -> None:
+    def start(self, total_models: int, total_targets: int, total_folds: int = 1) -> None:
         """Start the progress tracking."""
         if self.quiet:
             return
@@ -282,12 +280,10 @@ class SimpleTrainingProgressCallback:
             BarColumn(),
             TaskProgressColumn(),
             TimeRemainingColumn(),
-            console=self.console
+            console=self.console,
         )
         self.progress.start()
-        self.overall_task = self.progress.add_task(
-            "[cyan]Overall Progress", total=total_work
-        )
+        self.overall_task = self.progress.add_task("[cyan]Overall Progress", total=total_work)
 
     def start_model(self, model_name: str) -> None:
         """Start tracking a new model."""
@@ -297,9 +293,7 @@ class SimpleTrainingProgressCallback:
         if self.model_task is not None:
             self.progress.remove_task(self.model_task)
 
-        self.model_task = self.progress.add_task(
-            f"[green]Model: {model_name}", total=None
-        )
+        self.model_task = self.progress.add_task(f"[green]Model: {model_name}", total=None)
 
     def start_target(self, target_name: str) -> None:
         """Start tracking a new target."""
@@ -309,9 +303,7 @@ class SimpleTrainingProgressCallback:
         if self.target_task is not None:
             self.progress.remove_task(self.target_task)
 
-        self.target_task = self.progress.add_task(
-            f"[yellow]  Target: {target_name}", total=None
-        )
+        self.target_task = self.progress.add_task(f"[yellow]  Target: {target_name}", total=None)
 
     def complete_target(self, target_name: str, info: Dict[str, Any]) -> None:
         """Complete a target."""
@@ -327,8 +319,7 @@ class SimpleTrainingProgressCallback:
 
         threshold = info.get("threshold", 0.5)
         self.console.print(
-            f"  [bold green]✓[/bold green] {target_name} "
-            f"[dim](threshold: {threshold:.3f})[/dim]"
+            f"  [bold green]✓[/bold green] {target_name} [dim](threshold: {threshold:.3f})[/dim]"
         )
 
     def complete_model(self, model_name: str) -> None:
@@ -356,15 +347,15 @@ def _load_config_with_error_handling(config_path: Path) -> ConfigHandler:
         console.print(
             f"\n[bold red]Error:[/bold red] Configuration file not found: [cyan]{config_path}[/cyan]\n\n"
             f"[dim]Hint: Create a config file with:[/dim] respredai create-config {config_path}",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
-    if config_path.suffix.lower() != '.ini':
+    if config_path.suffix.lower() != ".ini":
         console.print(
             f"\n[bold red]Error:[/bold red] Configuration file must have .ini extension, "
             f"got: [cyan]{config_path.suffix}[/cyan]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
@@ -374,20 +365,14 @@ def _load_config_with_error_handling(config_path: Path) -> ConfigHandler:
         console.print(
             f"\n[bold red]Error:[/bold red] {str(e)}\n\n"
             f"[dim]Check that your data_path in the config file points to an existing file.[/dim]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
     except ValueError as e:
-        console.print(
-            f"\n[bold red]Configuration Error:[/bold red] {str(e)}",
-            style="red"
-        )
+        console.print(f"\n[bold red]Configuration Error:[/bold red] {str(e)}", style="red")
         raise typer.Exit(code=1)
     except Exception as e:
-        console.print(
-            f"\n[bold red]Error loading configuration:[/bold red] {str(e)}",
-            style="red"
-        )
+        console.print(f"\n[bold red]Error loading configuration:[/bold red] {str(e)}", style="red")
         raise typer.Exit(code=1)
 
 
@@ -399,29 +384,23 @@ def _load_data_with_error_handling(config_handler: ConfigHandler) -> DataSetter:
         console.print(
             f"\n[bold red]Error:[/bold red] Data file not found: [cyan]{data_path}[/cyan]\n\n"
             f"[dim]Check that 'data_path' in your config file points to an existing CSV file.[/dim]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
     try:
         return DataSetter(config_handler)
     except FileNotFoundError as e:
-        console.print(
-            f"\n[bold red]Error:[/bold red] {str(e)}",
-            style="red"
-        )
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}", style="red")
         raise typer.Exit(code=1)
     except ValueError as e:
-        console.print(
-            f"\n[bold red]Data Error:[/bold red] {str(e)}",
-            style="red"
-        )
+        console.print(f"\n[bold red]Data Error:[/bold red] {str(e)}", style="red")
         raise typer.Exit(code=1)
     except AssertionError as e:
         console.print(
             f"\n[bold red]Data Validation Error:[/bold red] {str(e)}\n\n"
             f"[dim]Check your data for missing values or invalid entries.[/dim]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
@@ -436,8 +415,8 @@ def validate_config(
         False,
         "--check-data",
         "-d",
-        help="Also validate that the data file exists and can be loaded"
-    )
+        help="Also validate that the data file exists and can be loaded",
+    ),
 ):
     """Validate a configuration file without running the pipeline."""
 
@@ -466,7 +445,7 @@ def validate_config(
         Panel(
             "[bold green]✓ Configuration is valid![/bold green]",
             title="Validation Passed",
-            border_style="green"
+            border_style="green",
         )
     )
 
@@ -479,37 +458,16 @@ def run(
         "-c",
         help="Path to the configuration file (.ini format)",
     ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        "-q",
-        help="Suppress banner and progress output"
-    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress banner and progress output"),
     # CLI overrides
     models: Optional[str] = typer.Option(
-        None,
-        "--models",
-        "-m",
-        help="Override models (comma-separated, e.g., 'LR,RF,XGB')"
+        None, "--models", "-m", help="Override models (comma-separated, e.g., 'LR,RF,XGB')"
     ),
     targets: Optional[str] = typer.Option(
-        None,
-        "--targets",
-        "-t",
-        help="Override targets (comma-separated)"
+        None, "--targets", "-t", help="Override targets (comma-separated)"
     ),
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Override output folder"
-    ),
-    seed: Optional[int] = typer.Option(
-        None,
-        "--seed",
-        "-s",
-        help="Override random seed"
-    )
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Override output folder"),
+    seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Override random seed"),
 ):
     """
     Run the machine learning pipeline with the specified configuration.
@@ -565,7 +523,7 @@ def run(
             datasetter=datasetter,
             models=config_handler.models,
             config_handler=config_handler,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
     except Exception as e:
         console.print(f"\n[bold red]Pipeline Error:[/bold red] {str(e)}")
@@ -578,7 +536,7 @@ def run(
         f"[bold green]✓ Pipeline completed successfully![/bold green]\n\n"
         f"Results saved to: [cyan]{config_handler.out_folder}[/cyan]",
         title="Success",
-        border_style="green"
+        border_style="green",
     )
     console.print("\n", success_panel)
 
@@ -591,36 +549,15 @@ def train(
         "-c",
         help="Path to the configuration file (.ini format)",
     ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        "-q",
-        help="Suppress banner and progress output"
-    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress banner and progress output"),
     models: Optional[str] = typer.Option(
-        None,
-        "--models",
-        "-m",
-        help="Override models (comma-separated, e.g., 'LR,RF,XGB')"
+        None, "--models", "-m", help="Override models (comma-separated, e.g., 'LR,RF,XGB')"
     ),
     targets: Optional[str] = typer.Option(
-        None,
-        "--targets",
-        "-t",
-        help="Override targets (comma-separated)"
+        None, "--targets", "-t", help="Override targets (comma-separated)"
     ),
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Override output folder"
-    ),
-    seed: Optional[int] = typer.Option(
-        None,
-        "--seed",
-        "-s",
-        help="Override random seed"
-    )
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Override output folder"),
+    seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Override random seed"),
 ):
     """
     Train models on entire dataset using GridSearchCV for hyperparameter tuning.
@@ -671,7 +608,7 @@ def train(
             datasetter=datasetter,
             models=config_handler.models,
             config_handler=config_handler,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
     except Exception as e:
         console.print(f"\n[bold red]Training Error:[/bold red] {str(e)}")
@@ -685,7 +622,7 @@ def train(
         f"Models saved to: [cyan]{trained_models_dir}[/cyan]\n"
         f"Metadata saved to: [cyan]{trained_models_dir / 'training_metadata.json'}[/cyan]",
         title="Success",
-        border_style="green"
+        border_style="green",
     )
     console.print("\n", success_panel)
 
@@ -710,12 +647,7 @@ def evaluate(
         "-o",
         help="Output directory for evaluation results",
     ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        "-q",
-        help="Suppress progress output"
-    )
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
 ):
     """
     Evaluate trained models on new data with ground truth.
@@ -732,7 +664,7 @@ def evaluate(
     if not models_dir.exists():
         console.print(
             f"\n[bold red]Error:[/bold red] Models directory not found: [cyan]{models_dir}[/cyan]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
@@ -741,14 +673,13 @@ def evaluate(
         console.print(
             f"\n[bold red]Error:[/bold red] Training metadata not found: [cyan]{metadata_path}[/cyan]\n\n"
             f"[dim]Ensure this directory was created by 'respredai train'[/dim]",
-            style="red"
+            style="red",
         )
         raise typer.Exit(code=1)
 
     if not data.exists():
         console.print(
-            f"\n[bold red]Error:[/bold red] Data file not found: [cyan]{data}[/cyan]",
-            style="red"
+            f"\n[bold red]Error:[/bold red] Data file not found: [cyan]{data}[/cyan]", style="red"
         )
         raise typer.Exit(code=1)
 
@@ -758,10 +689,7 @@ def evaluate(
 
     try:
         results = perform_evaluation(
-            models_dir=models_dir,
-            data_path=data,
-            output_dir=output,
-            verbose=not quiet
+            models_dir=models_dir, data_path=data, output_dir=output, verbose=not quiet
         )
     except ValueError as e:
         console.print(f"\n[bold red]Validation Error:[/bold red] {str(e)}")
@@ -782,7 +710,7 @@ def evaluate(
         f"  • Predictions: [cyan]{output_path / 'predictions'}[/cyan]\n"
         f"  • Summary: [cyan]{output_path / 'evaluation_summary.csv'}[/cyan]",
         title="Success",
-        border_style="green"
+        border_style="green",
     )
     console.print("\n", success_panel)
 
@@ -805,6 +733,7 @@ def list_models():
         ("TabPFN", "TabPFN"),
         ("RBF_SVC", "RBF SVM"),
         ("Linear_SVC", "Linear SVM"),
+        ("KNN", "K-Nearest Neighbors"),
     ]
 
     table = Table(title="Available Models", show_header=True, header_style="bold magenta")
@@ -816,15 +745,16 @@ def list_models():
 
     console.print("\n")
     console.print(table)
-    console.print("\n[dim]Use these codes in your config file under the 'models' parameter.[/dim]\n")
+    console.print(
+        "\n[dim]Use these codes in your config file under the 'models' parameter.[/dim]\n"
+    )
 
 
 @app.command(rich_help_panel="Configuration")
 def create_config(
     output_path: Path = typer.Argument(
-        ...,
-        help="Path where the template configuration file will be created"
-    )
+        ..., help="Path where the template configuration file will be created"
+    ),
 ):
     """
     Create a template configuration file.
@@ -834,10 +764,9 @@ def create_config(
     """
 
     # Validate file extension
-    if output_path.suffix.lower() != '.ini':
+    if output_path.suffix.lower() != ".ini":
         console.print(
-            "[bold red]Error:[/bold red] Configuration file must have .ini extension",
-            style="red"
+            "[bold red]Error:[/bold red] Configuration file must have .ini extension", style="red"
         )
         raise typer.Exit(code=1)
 
@@ -876,8 +805,7 @@ compression = 3
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(template)
         console.print(
-            f"[bold green]✓[/bold green] Template configuration created: "
-            f"[cyan]{output_path}[/cyan]"
+            f"[bold green]✓[/bold green] Template configuration created: [cyan]{output_path}[/cyan]"
         )
         console.print("\n[dim]Edit this file with your data paths and parameters.[/dim]\n")
     except Exception as e:
@@ -927,40 +855,14 @@ def feature_importance(
         dir_okay=True,
         readable=True,
     ),
-    model: str = typer.Option(
-        ...,
-        "--model",
-        "-m",
-        help="Model name (e.g., LR, RF, XGB)"
-    ),
-    target: str = typer.Option(
-        ...,
-        "--target",
-        "-t",
-        help="Target name"
-    ),
-    top_n: int = typer.Option(
-        20,
-        "--top-n",
-        "-n",
-        help="Number of top features to display"
-    ),
-    no_plot: bool = typer.Option(
-        False,
-        "--no-plot",
-        help="Skip generating the plot"
-    ),
-    no_csv: bool = typer.Option(
-        False,
-        "--no-csv",
-        help="Skip generating the CSV file"
-    ),
+    model: str = typer.Option(..., "--model", "-m", help="Model name (e.g., LR, RF, XGB)"),
+    target: str = typer.Option(..., "--target", "-t", help="Target name"),
+    top_n: int = typer.Option(20, "--top-n", "-n", help="Number of top features to display"),
+    no_plot: bool = typer.Option(False, "--no-plot", help="Skip generating the plot"),
+    no_csv: bool = typer.Option(False, "--no-csv", help="Skip generating the CSV file"),
     seed: Optional[int] = typer.Option(
-        None,
-        "--seed",
-        "-s",
-        help="Random seed for SHAP reproducibility"
-    )
+        None, "--seed", "-s", help="Random seed for SHAP reproducibility"
+    ),
 ):
     """
     Extract and visualize feature importance/coefficients for a trained model.
@@ -981,7 +883,9 @@ def feature_importance(
     """
     print_banner()
 
-    console.print(f"\n[bold cyan]Extracting feature importance for {model} - {target}...[/bold cyan]\n")
+    console.print(
+        f"\n[bold cyan]Extracting feature importance for {model} - {target}...[/bold cyan]\n"
+    )
 
     try:
         result = process_feature_importance(
@@ -991,7 +895,7 @@ def feature_importance(
             top_n=top_n,
             save_plot=not no_plot,
             save_csv=not no_csv,
-            seed=seed
+            seed=seed,
         )
 
         if result is None:
@@ -1026,7 +930,7 @@ def feature_importance(
         table = Table(
             title=f"Top {top_n} Features{method_suffix}: {model} - {target}",
             show_header=True,
-            header_style="bold magenta"
+            header_style="bold magenta",
         )
         table.add_column("Rank", style="cyan", width=6)
         table.add_column("Feature", style="green")
@@ -1036,11 +940,7 @@ def feature_importance(
         for rank, feature in enumerate(top_feature_names, 1):
             importance = top_mean[feature]
             std = top_std[feature]
-            table.add_row(
-                str(rank),
-                feature,
-                f"{importance:.4f} ± {std:.4f}"
-            )
+            table.add_row(str(rank), feature, f"{importance:.4f} ± {std:.4f}")
 
         console.print("\n")
         console.print(table)
@@ -1052,21 +952,29 @@ def feature_importance(
 
         output_messages = []
         if not no_csv:
-            csv_path = output_folder / "feature_importance" / target_safe / f"{model_safe}_feature_importance{suffix}.csv"
+            csv_path = (
+                output_folder
+                / "feature_importance"
+                / target_safe
+                / f"{model_safe}_feature_importance{suffix}.csv"
+            )
             output_messages.append(f"CSV: [cyan]{csv_path}[/cyan]")
         if not no_plot:
-            plot_path = output_folder / "feature_importance" / target_safe / f"{model_safe}_feature_importance{suffix}.png"
+            plot_path = (
+                output_folder
+                / "feature_importance"
+                / target_safe
+                / f"{model_safe}_feature_importance{suffix}.png"
+            )
             output_messages.append(f"Plot: [cyan]{plot_path}[/cyan]")
 
         if output_messages:
-            success_text = "[bold green]✓ Feature importance extracted successfully![/bold green]\n\n"
+            success_text = (
+                "[bold green]✓ Feature importance extracted successfully![/bold green]\n\n"
+            )
             success_text += "Output files:\n" + "\n".join(f"  • {msg}" for msg in output_messages)
 
-            success_panel = Panel(
-                success_text,
-                title="Success",
-                border_style="green"
-            )
+            success_panel = Panel(success_text, title="Success", border_style="green")
             console.print("\n", success_panel)
 
     except Exception as e:

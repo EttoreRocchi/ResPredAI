@@ -1,8 +1,8 @@
 """Utility classes for configuration and data handling."""
 
+import logging
 import os
 from configparser import ConfigParser
-import logging
 from typing import Iterable, List, Optional
 
 import numpy as np
@@ -29,6 +29,10 @@ class ConfigHandler:
     out_folder: str
     save_models_enable: bool
     model_compression: int
+    imputation_method: str
+    imputation_strategy: str
+    imputation_n_neighbors: int
+    imputation_estimator: str
     logger: Optional[logging.Logger]
 
     def __init__(self, config_path: str) -> None:
@@ -44,9 +48,7 @@ class ConfigHandler:
         self.logger = None
         self._setup_config()
         if self.verbosity:
-            self.logger = self._setup_logger(
-                os.path.join(self.out_folder, self.log_basename)
-            )
+            self.logger = self._setup_logger(os.path.join(self.out_folder, self.log_basename))
 
     def _setup_config(self) -> None:
         """Parse and validate configuration file."""
@@ -65,7 +67,9 @@ class ConfigHandler:
         self.models = [m.strip() for m in config.get("Pipeline", "models").split(",")]
         self.outer_folds = config.getint("Pipeline", "outer_folds")
         self.inner_folds = config.getint("Pipeline", "inner_folds")
-        self.calibrate_threshold = config.getboolean("Pipeline", "calibrate_threshold", fallback=False)
+        self.calibrate_threshold = config.getboolean(
+            "Pipeline", "calibrate_threshold", fallback=False
+        )
         self.threshold_method = config.get("Pipeline", "threshold_method", fallback="auto").lower()
 
         # Section: Reproducibility
@@ -96,6 +100,37 @@ class ConfigHandler:
                 f"Threshold method must be 'auto', 'oof', or 'cv', got '{self.threshold_method}'"
             )
 
+        # Section: Imputation
+        self.imputation_method = config.get("Imputation", "method", fallback="none").lower()
+        self.imputation_strategy = config.get("Imputation", "strategy", fallback="mean").lower()
+        self.imputation_n_neighbors = config.getint("Imputation", "n_neighbors", fallback=5)
+        self.imputation_estimator = config.get(
+            "Imputation", "estimator", fallback="bayesian_ridge"
+        ).lower()
+
+        # Validate imputation method
+        valid_methods = ["none", "simple", "knn", "iterative"]
+        if self.imputation_method not in valid_methods:
+            raise ValueError(
+                f"Imputation method must be one of {valid_methods}, got '{self.imputation_method}'"
+            )
+
+        # Validate simple imputation strategy
+        valid_strategies = ["mean", "median", "most_frequent", "constant"]
+        if self.imputation_strategy not in valid_strategies:
+            raise ValueError(
+                f"Imputation strategy must be one of {valid_strategies}, "
+                f"got '{self.imputation_strategy}'"
+            )
+
+        # Validate iterative imputer estimator
+        valid_estimators = ["bayesian_ridge", "random_forest"]
+        if self.imputation_estimator not in valid_estimators:
+            raise ValueError(
+                f"Imputation estimator must be one of {valid_estimators}, "
+                f"got '{self.imputation_estimator}'"
+            )
+
     @staticmethod
     def _setup_logger(log_file: str) -> logging.Logger:
         """
@@ -112,8 +147,7 @@ class ConfigHandler:
             Configured logger instance
         """
         formatter = logging.Formatter(
-            fmt="%(asctime)s %(levelname)-8s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         handler = logging.FileHandler(log_file, mode="w+")
@@ -145,7 +179,7 @@ class DataSetter:
             Configuration handler with data paths and parameters
         """
         self.data = self._read_data(config_handler.data_path)
-        self._validate_data(self.data, config_handler.targets)
+        self._validate_data(self.data, config_handler.targets, config_handler.imputation_method)
 
         # Extract groups if group_column is specified
         self.groups = None
@@ -157,9 +191,7 @@ class DataSetter:
                 )
             self.groups = self.data[config_handler.group_column].values
             # Drop group column and targets from X
-            self.X = self.data.drop(
-                config_handler.targets + [config_handler.group_column], axis=1
-            )
+            self.X = self.data.drop(config_handler.targets + [config_handler.group_column], axis=1)
         else:
             # Drop only targets from X
             self.X = self.data.drop(config_handler.targets, axis=1)
@@ -186,7 +218,9 @@ class DataSetter:
         return pd.read_csv(data_path, sep=",", comment="#")
 
     @staticmethod
-    def _validate_data(data: pd.DataFrame, targets: Iterable) -> None:
+    def _validate_data(
+        data: pd.DataFrame, targets: Iterable, imputation_method: str = "none"
+    ) -> None:
         """
         Validate the loaded data.
 
@@ -196,14 +230,20 @@ class DataSetter:
             The dataframe to validate
         targets : Iterable
             Target column names
+        imputation_method : str
+            Imputation method from config (none, simple, knn, iterative)
 
         Raises
         ------
         AssertionError
             If validation fails
         """
-        # Check no missing values
-        assert not data.isnull().values.any(), "Dataset contains missing values"
+        # Check no missing values (only if imputation is disabled)
+        if imputation_method == "none":
+            assert not data.isnull().values.any(), (
+                "Dataset contains missing values. "
+                "Enable imputation in config or remove missing values."
+            )
 
         # Check targets in data
         assert set(targets).issubset(data.columns), "Target columns not found in dataset"

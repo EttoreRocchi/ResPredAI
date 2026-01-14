@@ -2,10 +2,9 @@
 
 ## Antimicrobial resistance predictions via artificial intelligence models
 
-[![Latest](https://img.shields.io/github/v/release/EttoreRocchi/ResPredAI?label=latest)](https://github.com/EttoreRocchi/ResPredAI/releases)
+[![PyPI](https://img.shields.io/pypi/v/respredai)](https://pypi.org/project/respredai/)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 ![CI](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/ci.yaml/badge.svg)
-![Docs](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/docs.yaml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Implementation of the pipeline described in:
@@ -23,6 +22,10 @@ Implementation of the pipeline described in:
   <strong><a href="#quick-start">Quick Start</a></strong> |
   <strong><a href="#cli-commands">CLI Commands</a></strong> |
   <strong><a href="#citation">Citation</a></strong>
+</p>
+
+<p align="center">
+  <em>A reproducible machine learning framework designed to accelerate clinical decision-making by predicting antimicrobial resistance patterns from patient data.</em>
 </p>
 
 ## Links
@@ -43,8 +46,6 @@ Or install from source:
 ```bash
 git clone https://github.com/EttoreRocchi/ResPredAI.git
 cd ResPredAI
-pip install .
-
 # For development (includes pytest)
 pip install -e ".[dev]"
 ```
@@ -96,6 +97,12 @@ n_jobs = -1
 [ModelSaving]
 enable = true
 compression = 3
+
+[Imputation]
+method = none
+strategy = mean
+n_neighbors = 5
+estimator = bayesian_ridge
 
 [Output]
 out_folder = ./output/
@@ -170,6 +177,7 @@ Available Models:
 │ TabPFN     │ TabPFN                   │
 │ RBF_SVC    │ RBF SVM                  │
 │ Linear_SVC │ Linear SVM               │
+│ KNN        │ K-Nearest Neighbors      │
 └────────────┴──────────────────────────┘
 ```
 
@@ -236,7 +244,8 @@ output_folder/
 │       ├── {model_name}_feature_importance.csv    # Importance values
 │       └── {model_name}_feature_importance.png    # Barplot visualization
 ├── confusion_matrices/                             # Confusion matrix heatmaps
-│   └── Confusion_matrices_{model_name}.png
+│   └── Confusion_matrix_{model_name}_{target_name}.png
+├── report.html                                     # Comprehensive HTML report
 └── respredai.log                                   # Execution log (if verbosity > 0)
 ```
 

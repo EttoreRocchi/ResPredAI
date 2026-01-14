@@ -1,14 +1,14 @@
 """Confusion matrix visualization and saving."""
 
-import math
-import os
-from typing import Dict
+from pathlib import Path
+from typing import Dict, List
 
-import numpy as np
-import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 
 
@@ -18,10 +18,10 @@ def save_cm(
     cms: Dict[str, pd.DataFrame],
     aurocs: Dict[str, list],
     out_dir: str,
-    model: str
-) -> None:
+    model: str,
+) -> List[Path]:
     """
-    Save confusion matrices with performance metrics as a figure.
+    Save individual confusion matrix PNGs for each target.
 
     Parameters
     ----------
@@ -37,32 +37,23 @@ def save_cm(
         Output directory path
     model : str
         Model name for the output filename
+
+    Returns
+    -------
+    List[Path]
+        List of paths to saved PNG files
     """
+    confusion_matrices_dir = Path(out_dir) / "confusion_matrices"
+    confusion_matrices_dir.mkdir(parents=True, exist_ok=True)
 
-    targets = list(cms.keys())
-    n_targets = len(targets)
+    model_safe = model.replace(" ", "_")
+    saved_paths = []
 
-    # Calculate grid dimensions
-    rows = int(math.ceil(math.sqrt(n_targets)))
-    cols = int(math.ceil(n_targets / rows))
+    for target in cms.keys():
+        target_safe = target.replace(" ", "_")
 
-    # Create figure with subplots
-    fig, axs = plt.subplots(
-        nrows=rows,
-        ncols=cols,
-        figsize=(6 * cols, 6 * rows),
-        dpi=300
-    )
-
-    # Handle different subplot configurations
-    if isinstance(axs, np.ndarray):
-        axs = axs.flatten()
-    else:
-        axs = [axs]
-
-    # Plot confusion matrix for each target
-    for i, target in enumerate(targets):
-        ax = axs[i]
+        # Create single figure
+        fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
 
         # Calculate mean and std of metrics
         f1_mean, f1_std = np.nanmean(f1scores[target]), np.nanstd(f1scores[target])
@@ -71,13 +62,13 @@ def save_cm(
 
         # Create title with metrics
         title_str = (
-            f"\n{target}\n\n"
-            f"F1 score = {f1_mean:.3f} ± {f1_std:.3f}\n"
-            f"Matthews Correlation Coefficient = {mcc_mean:.3f} ± {mcc_std:.3f}\n"
+            f"{target}\n\n"
+            f"F1 = {f1_mean:.3f} ± {f1_std:.3f}  |  "
+            f"MCC = {mcc_mean:.3f} ± {mcc_std:.3f}  |  "
             f"AUROC = {auroc_mean:.3f} ± {auroc_std:.3f}\n"
         )
 
-        ax.set_title(title_str, color="firebrick", fontsize=14)
+        ax.set_title(title_str, color="firebrick", fontsize=11)
 
         # Create heatmap
         hm = sns.heatmap(
@@ -88,28 +79,26 @@ def save_cm(
             vmin=0.0,
             vmax=1.0,
             fmt=".3f",
-            xticklabels=cms[target].columns if hasattr(cms[target], 'columns') else None,
-            yticklabels=cms[target].index if hasattr(cms[target], 'index') else None,
-            ax=ax
+            xticklabels=cms[target].columns if hasattr(cms[target], "columns") else None,
+            yticklabels=cms[target].index if hasattr(cms[target], "index") else None,
+            ax=ax,
         )
 
         # Set labels
         ax.set_xlabel("Predicted class", fontsize=12)
         ax.set_ylabel("True class", fontsize=12)
-        ax.tick_params(axis='both', labelsize=10)
+        ax.tick_params(axis="both", labelsize=10)
 
         # Adjust colorbar
         cbar = hm.collections[0].colorbar
         cbar.ax.tick_params(labelsize=10)
 
-    # Remove unused subplots
-    for j in range(i + 1, rows * cols):
-        fig.delaxes(axs[j])
+        # Save figure
+        plt.tight_layout()
+        output_path = confusion_matrices_dir / f"Confusion_matrix_{model_safe}_{target_safe}.png"
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
-    # Save figure in confusion_matrices folder
-    plt.tight_layout()
-    confusion_matrices_dir = os.path.join(out_dir, "confusion_matrices")
-    os.makedirs(confusion_matrices_dir, exist_ok=True)
-    output_path = os.path.join(confusion_matrices_dir, f"Confusion_matrices_{model}.png")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
+        saved_paths.append(output_path)
+
+    return saved_paths

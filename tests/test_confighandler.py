@@ -1,6 +1,9 @@
-import pytest
 from textwrap import dedent
+
+import pytest
+
 from respredai.io.config import ConfigHandler
+
 
 class TestConfigHandler:
     """Unit tests for ConfigHandler."""
@@ -152,7 +155,9 @@ class TestConfigHandler:
         """Test that all valid threshold_method values are correctly parsed."""
 
         config_text, _, _ = self._make_config(tmp_path)
-        config_text = config_text.replace("threshold_method = auto", f"threshold_method = {threshold_method}")
+        config_text = config_text.replace(
+            "threshold_method = auto", f"threshold_method = {threshold_method}"
+        )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 

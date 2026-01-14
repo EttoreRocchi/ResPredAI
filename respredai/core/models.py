@@ -3,8 +3,8 @@
 import warnings
 from pathlib import Path
 
-import pandas as pd
 import joblib
+import pandas as pd
 
 
 def generate_summary_report(output_folder: str, models: list, targets: list) -> None:
@@ -39,7 +39,9 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
             row = {"Model": model, "Target": target}
 
             for _, metric_row in df.iterrows():
-                metric_name = metric_row["Metric"].replace(" ", "_").replace("(", "").replace(")", "")
+                metric_name = (
+                    metric_row["Metric"].replace(" ", "_").replace("(", "").replace(")", "")
+                )
                 mean_val = metric_row["Mean"]
                 std_val = metric_row["Std"]
                 row[metric_name] = f"{mean_val:.3f}±{std_val:.3f}"
@@ -57,17 +59,15 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
     # Save global summary
     if all_summaries:
         all_summary_df = pd.DataFrame(all_summaries)
-        cols = ["Model", "Target"] + [c for c in all_summary_df.columns if c not in ["Model", "Target"]]
+        cols = ["Model", "Target"] + [
+            c for c in all_summary_df.columns if c not in ["Model", "Target"]
+        ]
         all_summary_df = all_summary_df[cols]
         all_summary_path = metrics_dir / "summary_all.csv"
         all_summary_df.to_csv(all_summary_path, index=False)
 
 
-def get_model_path(
-    output_folder: str,
-    model: str,
-    target: str
-) -> Path:
+def get_model_path(output_folder: str, model: str, target: str) -> Path:
     """
     Get the model file path for a model-target combination.
 
@@ -100,7 +100,7 @@ def save_models(
     completed_folds: int,
     model_path: Path,
     compression: int = 3,
-    fold_test_data: list = None
+    fold_test_data: list = None,
 ):
     """
     Save trained models with all fold data for feature importance (including SHAP).
@@ -129,14 +129,14 @@ def save_models(
     model_path.parent.mkdir(parents=True, exist_ok=True)
 
     model_data = {
-        'fold_models': fold_models,
-        'fold_transformers': fold_transformers,
-        'fold_thresholds': fold_thresholds,
-        'fold_hyperparams': fold_hyperparams,
-        'metrics': metrics,
-        'completed_folds': completed_folds,
-        'timestamp': pd.Timestamp.now().isoformat(),
-        'fold_test_data': fold_test_data
+        "fold_models": fold_models,
+        "fold_transformers": fold_transformers,
+        "fold_thresholds": fold_thresholds,
+        "fold_hyperparams": fold_hyperparams,
+        "metrics": metrics,
+        "completed_folds": completed_folds,
+        "timestamp": pd.Timestamp.now().isoformat(),
+        "fold_test_data": fold_test_data,
     }
 
     joblib.dump(model_data, model_path, compress=compression)

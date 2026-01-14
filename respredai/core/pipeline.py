@@ -1,31 +1,34 @@
 """Main pipeline execution for ResPredAI."""
 
-import warnings
 import json
+import warnings
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import joblib
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import joblib
-
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold, cross_val_predict, TunedThresholdClassifierCV
-from sklearn.metrics import confusion_matrix, roc_curve, make_scorer
+from sklearn.metrics import confusion_matrix, make_scorer, roc_curve
+from sklearn.model_selection import (
+    StratifiedGroupKFold,
+    StratifiedKFold,
+    TunedThresholdClassifierCV,
+    cross_val_predict,
+)
+from sklearn.preprocessing import OneHotEncoder
 
-from respredai.io.config import ConfigHandler, DataSetter
-from respredai.core.pipe import get_pipeline
 from respredai.core.metrics import metric_dict, save_metrics_summary, youden_j_score
-from respredai.core.models import get_model_path, save_models, load_models, generate_summary_report
+from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
+from respredai.core.pipe import get_pipeline
+from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.confusion_matrix import save_cm
+from respredai.visualization.html_report import generate_html_report
 
 
 def perform_pipeline(
-    datasetter: DataSetter,
-    models: list[str],
-    config_handler: ConfigHandler,
-    progress_callback=None
+    datasetter: DataSetter, models: list[str], config_handler: ConfigHandler, progress_callback=None
 ):
     """
     Execute the machine learning pipeline with nested cross-validation.
@@ -44,39 +47,30 @@ def perform_pipeline(
 
     X, Y = datasetter.X, datasetter.Y
     if config_handler.verbosity:
-        config_handler.logger.info(
-            f"Data dimension: {X.shape}"
-        )
+        config_handler.logger.info(f"Data dimension: {X.shape}")
 
     # List of categorical columns (non-continuous)
-    categorical_cols = [
-        col for col in X.columns
-        if col not in datasetter.continuous_features
-    ]
+    categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
     # One-hot encoding of categorical features
     ohe_transformer = ColumnTransformer(
         transformers=[
             (
                 "ohe",
-                OneHotEncoder(
-                    drop=None,
-                    sparse_output=False,
-                    handle_unknown="ignore"
-                ),
-                categorical_cols
+                OneHotEncoder(drop=None, sparse_output=False, handle_unknown="ignore"),
+                categorical_cols,
             )
         ],
         remainder="passthrough",
-        verbose_feature_names_out=False
+        verbose_feature_names_out=False,
     ).set_output(transform="pandas")
 
     # Apply one-hot encoding
     X = ohe_transformer.fit_transform(X)
 
     # Clean feature names for XGBoost compatibility (remove <, > characters)
-    X.columns = X.columns.str.replace('<', '_lt_', regex=False)
-    X.columns = X.columns.str.replace('>', '_gt_', regex=False)
+    X.columns = X.columns.str.replace("<", "_lt_", regex=False)
+    X.columns = X.columns.str.replace(">", "_gt_", regex=False)
 
     if config_handler.verbosity:
         config_handler.logger.info(
@@ -106,13 +100,15 @@ def perform_pipeline(
                 inner_folds=config_handler.inner_folds,
                 n_jobs=config_handler.n_jobs,
                 rnd_state=config_handler.seed,
-                use_groups=(datasetter.groups is not None)
+                use_groups=(datasetter.groups is not None),
+                imputation_method=config_handler.imputation_method,
+                imputation_strategy=config_handler.imputation_strategy,
+                imputation_n_neighbors=config_handler.imputation_n_neighbors,
+                imputation_estimator=config_handler.imputation_estimator,
             )
         except Exception as e:
             if config_handler.verbosity:
-                config_handler.logger.error(
-                    f"Failed to initialize model {model}: {str(e)}"
-                )
+                config_handler.logger.error(f"Failed to initialize model {model}: {str(e)}")
             warnings.warn(f"Skipping model {model} due to initialization error: {str(e)}")
             if progress_callback:
                 total_work_skipped = len(Y.columns) * config_handler.outer_folds
@@ -122,27 +118,23 @@ def perform_pipeline(
         # Use StratifiedGroupKFold if groups are specified, otherwise StratifiedKFold
         if datasetter.groups is not None:
             outer_cv = StratifiedGroupKFold(
-                n_splits=config_handler.outer_folds,
-                shuffle=True,
-                random_state=config_handler.seed
+                n_splits=config_handler.outer_folds, shuffle=True, random_state=config_handler.seed
             )
         else:
             outer_cv = StratifiedKFold(
-                n_splits=config_handler.outer_folds,
-                shuffle=True,
-                random_state=config_handler.seed
+                n_splits=config_handler.outer_folds, shuffle=True, random_state=config_handler.seed
             )
 
         f1scores, mccs, cms, aurocs = {}, {}, {}, {}
         all_metrics = {}  # Store comprehensive metrics
+        # Sample-level predictions for bootstrap CI
+        all_y_true = {}
+        all_y_pred = {}
+        all_y_prob = {}
 
         for target in Y.columns:
             # Check for existing saved models
-            model_path = get_model_path(
-                config_handler.out_folder,
-                model,
-                target
-            )
+            model_path = get_model_path(config_handler.out_folder, model, target)
 
             # Try to load saved models
             model_data = None
@@ -156,7 +148,7 @@ def perform_pipeline(
             if config_handler.save_models_enable and model_path.exists():
                 model_data = load_models(model_path)
                 if model_data is not None:
-                    completed_folds = model_data.get('completed_folds', 0)
+                    completed_folds = model_data.get("completed_folds", 0)
 
                     # Check if all folds are completed
                     if completed_folds >= config_handler.outer_folds:
@@ -166,31 +158,43 @@ def perform_pipeline(
                             )
 
                         # Restore metrics from saved models
-                        all_metrics[target] = model_data['metrics'].get('all_metrics', [])
-                        f1scores[target] = model_data['metrics'].get('f1scores', [])
-                        mccs[target] = model_data['metrics'].get('mccs', [])
-                        cms[target] = model_data['metrics'].get('cms', [])
-                        aurocs[target] = model_data['metrics'].get('aurocs', [])
+                        all_metrics[target] = model_data["metrics"].get("all_metrics", [])
+                        f1scores[target] = model_data["metrics"].get("f1scores", [])
+                        mccs[target] = model_data["metrics"].get("mccs", [])
+                        cms[target] = model_data["metrics"].get("cms", [])
+                        aurocs[target] = model_data["metrics"].get("aurocs", [])
+
+                        # Restore sample-level predictions for bootstrap CI
+                        all_y_true[target] = model_data["metrics"].get("all_y_true", [])
+                        all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
+                        all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
 
                         if progress_callback:
-                            progress_callback.skip_target(target, config_handler.outer_folds, "saved models")
+                            progress_callback.skip_target(
+                                target, config_handler.outer_folds, "saved models"
+                            )
 
                         continue
                     else:
                         # Resume from last completed fold
                         start_fold = completed_folds
-                        fold_models = model_data.get('fold_models', [])
-                        fold_transformers = model_data.get('fold_transformers', [])
-                        fold_thresholds = model_data.get('fold_thresholds', [])
-                        fold_hyperparams = model_data.get('fold_hyperparams', [])
-                        fold_test_data = model_data.get('fold_test_data', [])
+                        fold_models = model_data.get("fold_models", [])
+                        fold_transformers = model_data.get("fold_transformers", [])
+                        fold_thresholds = model_data.get("fold_thresholds", [])
+                        fold_hyperparams = model_data.get("fold_hyperparams", [])
+                        fold_test_data = model_data.get("fold_test_data", [])
 
                         # Restore partial metrics
-                        all_metrics[target] = model_data['metrics'].get('all_metrics', [])
-                        f1scores[target] = model_data['metrics'].get('f1scores', [])
-                        mccs[target] = model_data['metrics'].get('mccs', [])
-                        cms[target] = model_data['metrics'].get('cms', [])
-                        aurocs[target] = model_data['metrics'].get('aurocs', [])
+                        all_metrics[target] = model_data["metrics"].get("all_metrics", [])
+                        f1scores[target] = model_data["metrics"].get("f1scores", [])
+                        mccs[target] = model_data["metrics"].get("mccs", [])
+                        cms[target] = model_data["metrics"].get("cms", [])
+                        aurocs[target] = model_data["metrics"].get("aurocs", [])
+
+                        # Restore partial sample-level predictions for bootstrap CI
+                        all_y_true[target] = model_data["metrics"].get("all_y_true", [])
+                        all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
+                        all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
 
                         if config_handler.verbosity:
                             config_handler.logger.info(
@@ -204,6 +208,10 @@ def perform_pipeline(
                 cms[target] = []
                 aurocs[target] = []
                 all_metrics[target] = []
+                # Sample-level predictions for bootstrap CI
+                all_y_true[target] = []
+                all_y_pred[target] = []
+                all_y_prob[target] = []
 
             y = Y[target]
             if config_handler.verbosity:
@@ -214,9 +222,7 @@ def perform_pipeline(
             # Start target progress
             if progress_callback:
                 progress_callback.start_target(
-                    target,
-                    total_folds=config_handler.outer_folds,
-                    resumed_from=start_fold
+                    target, total_folds=config_handler.outer_folds, resumed_from=start_fold
                 )
 
             # Pass groups to split if available
@@ -233,9 +239,7 @@ def perform_pipeline(
                     progress_callback.start_fold(i + 1, config_handler.outer_folds)
 
                 if config_handler.verbosity == 2:
-                    config_handler.logger.info(
-                        f"Starting iteration: {i+1}."
-                    )
+                    config_handler.logger.info(f"Starting iteration: {i + 1}.")
 
                 X_train, X_test = X.iloc[train_set], X.iloc[test_set]
                 y_train, y_test = y.iloc[train_set], y.iloc[test_set]
@@ -248,15 +252,13 @@ def perform_pipeline(
                     # Pass groups to GridSearchCV if available
                     fit_params = {}
                     if datasetter.groups is not None:
-                        fit_params['groups'] = datasetter.groups[train_set]
+                        fit_params["groups"] = datasetter.groups[train_set]
 
                     # Step 1: Hyperparameter tuning with GridSearchCV (optimizes ROC-AUC)
                     grid.fit(X=X_train_scaled, y=y_train, **fit_params)
 
                     if config_handler.verbosity == 2:
-                        config_handler.logger.info(
-                            f"Model {model} trained for iteration: {i+1}."
-                        )
+                        config_handler.logger.info(f"Model {model} trained for iteration: {i + 1}.")
 
                     # Step 2: Get best estimator and hyperparameters from GridSearchCV
                     best_estimator = grid.best_estimator_
@@ -277,14 +279,14 @@ def perform_pipeline(
                                 inner_cv = StratifiedGroupKFold(
                                     n_splits=config_handler.inner_folds,
                                     shuffle=True,
-                                    random_state=config_handler.seed
+                                    random_state=config_handler.seed,
                                 )
-                                cv_fit_params = {'groups': datasetter.groups[train_set]}
+                                cv_fit_params = {"groups": datasetter.groups[train_set]}
                             else:
                                 inner_cv = StratifiedKFold(
                                     n_splits=config_handler.inner_folds,
                                     shuffle=True,
-                                    random_state=config_handler.seed
+                                    random_state=config_handler.seed,
                                 )
                                 cv_fit_params = {}
 
@@ -294,8 +296,8 @@ def perform_pipeline(
                                 X_train_scaled,
                                 y_train,
                                 cv=inner_cv,
-                                method='predict_proba',
-                                **cv_fit_params
+                                method="predict_proba",
+                                **cv_fit_params,
                             )
 
                             # Calculate ROC curve and find optimal threshold using Youden's J
@@ -318,7 +320,7 @@ def perform_pipeline(
                             inner_tuner_cv = StratifiedKFold(
                                 n_splits=config_handler.inner_folds,
                                 shuffle=True,
-                                random_state=config_handler.seed
+                                random_state=config_handler.seed,
                             )
 
                             # Wrap the unfitted estimator in TunedThresholdClassifierCV
@@ -326,7 +328,7 @@ def perform_pipeline(
                                 estimator=grid.estimator,
                                 cv=inner_tuner_cv,
                                 scoring=youden_scorer,
-                                n_jobs=1
+                                n_jobs=1,
                             )
 
                             # Fit to calibrate threshold with CV
@@ -353,12 +355,13 @@ def perform_pipeline(
                         y_pred = best_classifier.predict(X_test_scaled)
 
                     # Calculate comprehensive metrics
-                    fold_metrics = metric_dict(
-                        y_true=y_test.values,
-                        y_pred=y_pred,
-                        y_prob=y_prob
-                    )
+                    fold_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
                     all_metrics[target].append(fold_metrics)
+
+                    # Store sample-level predictions for bootstrap CI
+                    all_y_true[target].extend(y_test.values)
+                    all_y_pred[target].extend(y_pred)
+                    all_y_prob[target].extend(y_prob)
 
                     # Store individual metrics for backwards compatibility
                     f1scores[target].append(fold_metrics["F1 (weighted)"])
@@ -366,10 +369,7 @@ def perform_pipeline(
                     aurocs[target].append(fold_metrics["AUROC"])
                     cms[target].append(
                         confusion_matrix(
-                            y_true=y_test,
-                            y_pred=y_pred,
-                            normalize="true",
-                            labels=[0, 1]
+                            y_true=y_test, y_pred=y_pred, normalize="true", labels=[0, 1]
                         )
                     )
 
@@ -379,7 +379,9 @@ def perform_pipeline(
                     fold_thresholds.append(best_threshold)
                     fold_hyperparams.append(best_params)
                     # Store test data for SHAP computation (use transformed feature names)
-                    fold_test_data.append((X_test_scaled, list(transformer.get_feature_names_out())))
+                    fold_test_data.append(
+                        (X_test_scaled, list(transformer.get_feature_names_out()))
+                    )
 
                     # Update progress for successful fold
                     if progress_callback:
@@ -388,7 +390,7 @@ def perform_pipeline(
                 except Exception as e:
                     if config_handler.verbosity:
                         config_handler.logger.error(
-                            f"Error in iteration {i+1} for target {target}: {str(e)}"
+                            f"Error in iteration {i + 1} for target {target}: {str(e)}"
                         )
                     # Append NaN for failed iterations
                     nan_metrics = {
@@ -401,7 +403,7 @@ def perform_pipeline(
                         "F1 (weighted)": np.nan,
                         "MCC": np.nan,
                         "Balanced Acc": np.nan,
-                        "AUROC": np.nan
+                        "AUROC": np.nan,
                     }
                     all_metrics[target].append(nan_metrics)
                     f1scores[target].append(np.nan)
@@ -420,11 +422,15 @@ def perform_pipeline(
                 # Save models after each fold if enabled
                 if config_handler.save_models_enable:
                     target_metrics = {
-                        'all_metrics': all_metrics[target],
-                        'f1scores': f1scores[target],
-                        'mccs': mccs[target],
-                        'cms': cms[target],
-                        'aurocs': aurocs[target]
+                        "all_metrics": all_metrics[target],
+                        "f1scores": f1scores[target],
+                        "mccs": mccs[target],
+                        "cms": cms[target],
+                        "aurocs": aurocs[target],
+                        # Sample-level predictions for bootstrap CI
+                        "all_y_true": all_y_true[target],
+                        "all_y_pred": all_y_pred[target],
+                        "all_y_prob": all_y_prob[target],
                     }
 
                     save_models(
@@ -436,12 +442,12 @@ def perform_pipeline(
                         completed_folds=i + 1,
                         model_path=model_path,
                         compression=config_handler.model_compression,
-                        fold_test_data=fold_test_data
+                        fold_test_data=fold_test_data,
                     )
 
                     if config_handler.verbosity == 2:
                         config_handler.logger.info(
-                            f"Saved models after fold {i+1} for {model} - {target}"
+                            f"Saved models after fold {i + 1} for {model} - {target}"
                         )
 
             if config_handler.verbosity:
@@ -452,12 +458,12 @@ def perform_pipeline(
             # Calculate summary metrics for progress callback
             if progress_callback:
                 summary_metrics = {
-                    'F1 (weighted)': np.nanmean(f1scores[target]),
-                    'F1_std': np.nanstd(f1scores[target]),
-                    'MCC': np.nanmean(mccs[target]),
-                    'MCC_std': np.nanstd(mccs[target]),
-                    'AUROC': np.nanmean(aurocs[target]),
-                    'AUROC_std': np.nanstd(aurocs[target])
+                    "F1 (weighted)": np.nanmean(f1scores[target]),
+                    "F1_std": np.nanstd(f1scores[target]),
+                    "MCC": np.nanmean(mccs[target]),
+                    "MCC_std": np.nanstd(mccs[target]),
+                    "AUROC": np.nanmean(aurocs[target]),
+                    "AUROC_std": np.nanstd(aurocs[target]),
                 }
                 progress_callback.complete_target(target, summary_metrics)
 
@@ -466,7 +472,7 @@ def perform_pipeline(
             target: pd.DataFrame(
                 data=np.nanmean(cms[target], axis=0),
                 index=["Susceptible", "Resistant"],
-                columns=["Susceptible", "Resistant"]
+                columns=["Susceptible", "Resistant"],
             )
             for target in Y.columns
         }
@@ -478,7 +484,7 @@ def perform_pipeline(
             cms=average_cms,
             aurocs=aurocs,
             out_dir=config_handler.out_folder,
-            model=model.replace(" ", "_")
+            model=model.replace(" ", "_"),
         )
 
         # Save comprehensive metrics for each target
@@ -486,16 +492,21 @@ def perform_pipeline(
         for target in Y.columns:
             target_safe_name = target.replace(" ", "_")
             metrics_output_path = (
-                Path(config_handler.out_folder) / "metrics" / target_safe_name /
-                f"{model_safe_name}_metrics_detailed.csv"
+                Path(config_handler.out_folder)
+                / "metrics"
+                / target_safe_name
+                / f"{model_safe_name}_metrics_detailed.csv"
             )
 
             save_metrics_summary(
                 metrics_dict=all_metrics[target],
                 output_path=metrics_output_path,
                 confidence=0.95,
-                n_bootstrap=10_000,
-                random_state=config_handler.seed
+                n_bootstrap=1_000,
+                random_state=config_handler.seed,
+                y_true_all=np.array(all_y_true[target]),
+                y_pred_all=np.array(all_y_pred[target]),
+                y_prob_all=np.array(all_y_prob[target]),
             )
 
             if config_handler.verbosity:
@@ -504,9 +515,7 @@ def perform_pipeline(
                 )
 
         if config_handler.verbosity:
-            config_handler.logger.info(
-                f"Completed model {model}."
-            )
+            config_handler.logger.info(f"Completed model {model}.")
 
         # Complete model progress
         if progress_callback:
@@ -520,20 +529,34 @@ def perform_pipeline(
     generate_summary_report(
         output_folder=config_handler.out_folder,
         models=config_handler.models,
-        targets=list(Y.columns)
+        targets=list(Y.columns),
     )
 
+    # Generate HTML report
     if config_handler.verbosity:
-        config_handler.logger.info(
-            "Analysis completed."
+        config_handler.logger.info("Generating HTML report...")
+    try:
+        report_path = generate_html_report(
+            output_folder=config_handler.out_folder,
+            models=config_handler.models,
+            targets=list(Y.columns),
+            config_handler=config_handler,
         )
+        if config_handler.verbosity:
+            config_handler.logger.info(f"HTML report generated: {report_path}")
+    except Exception as e:
+        if config_handler.verbosity:
+            config_handler.logger.warning(f"Failed to generate HTML report: {e}")
+
+    if config_handler.verbosity:
+        config_handler.logger.info("Analysis completed.")
 
 
 def perform_training(
     datasetter: DataSetter,
     models: List[str],
     config_handler: ConfigHandler,
-    progress_callback: Optional[Any] = None
+    progress_callback: Optional[Any] = None,
 ) -> None:
     """
     Train models on entire dataset using GridSearchCV for hyperparameter tuning.
@@ -588,14 +611,17 @@ def perform_training(
         "config": {
             "inner_folds": config_handler.inner_folds,
             "calibrate_threshold": config_handler.calibrate_threshold,
-            "threshold_method": config_handler.threshold_method if config_handler.calibrate_threshold else None,
-            "seed": config_handler.seed
-        }
+            "threshold_method": config_handler.threshold_method
+            if config_handler.calibrate_threshold
+            else None,
+            "seed": config_handler.seed,
+        },
     }
 
     if progress_callback:
-        total_tasks = len(models) * len(Y.columns)
-        progress_callback.start(total_models=len(models), total_targets=len(Y.columns), total_folds=1)
+        progress_callback.start(
+            total_models=len(models), total_targets=len(Y.columns), total_folds=1
+        )
 
     for model in models:
         if progress_callback:
@@ -614,7 +640,11 @@ def perform_training(
                 n_jobs=config_handler.n_jobs,
                 rnd_state=config_handler.seed,
                 inner_folds=config_handler.inner_folds,
-                use_groups=datasetter.groups is not None
+                use_groups=datasetter.groups is not None,
+                imputation_method=config_handler.imputation_method,
+                imputation_strategy=config_handler.imputation_strategy,
+                imputation_n_neighbors=config_handler.imputation_n_neighbors,
+                imputation_estimator=config_handler.imputation_estimator,
             )
 
             # Scale features
@@ -623,7 +653,7 @@ def perform_training(
             # Fit GridSearchCV on entire dataset
             fit_params = {}
             if datasetter.groups is not None:
-                fit_params['groups'] = datasetter.groups
+                fit_params["groups"] = datasetter.groups
 
             grid.fit(X=X_scaled, y=y, **fit_params)
 
@@ -641,14 +671,14 @@ def perform_training(
                     inner_cv = StratifiedGroupKFold(
                         n_splits=config_handler.inner_folds,
                         shuffle=True,
-                        random_state=config_handler.seed
+                        random_state=config_handler.seed,
                     )
-                    cv_fit_params = {'groups': datasetter.groups}
+                    cv_fit_params = {"groups": datasetter.groups}
                 else:
                     inner_cv = StratifiedKFold(
                         n_splits=config_handler.inner_folds,
                         shuffle=True,
-                        random_state=config_handler.seed
+                        random_state=config_handler.seed,
                     )
                     cv_fit_params = {}
 
@@ -658,8 +688,8 @@ def perform_training(
                     X_scaled,
                     y,
                     cv=inner_cv,
-                    method='predict_proba',
-                    **cv_fit_params
+                    method="predict_proba",
+                    **cv_fit_params,
                 )[:, 1]
 
                 # Find optimal threshold using Youden's J
@@ -678,7 +708,7 @@ def perform_training(
                 "feature_names_transformed": list(X.columns),
                 "target_name": target,
                 "model_name": model,
-                "training_timestamp": datetime.now().isoformat()
+                "training_timestamp": datetime.now().isoformat(),
             }
 
             model_safe = model.replace(" ", "_")
@@ -708,10 +738,7 @@ def perform_training(
 
 
 def perform_evaluation(
-    models_dir: Path,
-    data_path: Path,
-    output_dir: Path,
-    verbose: bool = True
+    models_dir: Path, data_path: Path, output_dir: Path, verbose: bool = True
 ) -> Dict[str, Dict[str, Any]]:
     """
     Evaluate trained models on new data with ground truth.
@@ -821,12 +848,14 @@ def perform_evaluation(
         model_safe = model_name.replace(" ", "_")
         target_safe = target_name.replace(" ", "_")
 
-        pred_df = pd.DataFrame({
-            "sample_id": range(len(y_true)),
-            "y_true": y_true,
-            "y_pred": y_pred,
-            "y_prob": y_prob[:, 1]
-        })
+        pred_df = pd.DataFrame(
+            {
+                "sample_id": range(len(y_true)),
+                "y_true": y_true,
+                "y_pred": y_pred,
+                "y_prob": y_prob[:, 1],
+            }
+        )
         pred_path = predictions_dir / f"{model_safe}_{target_safe}_predictions.csv"
         pred_df.to_csv(pred_path, index=False)
 
@@ -834,9 +863,7 @@ def perform_evaluation(
         target_metrics_dir = metrics_dir / target_safe
         target_metrics_dir.mkdir(parents=True, exist_ok=True)
 
-        metrics_df = pd.DataFrame([
-            {"Metric": k, "Value": v} for k, v in metrics.items()
-        ])
+        metrics_df = pd.DataFrame([{"Metric": k, "Value": v} for k, v in metrics.items()])
         metrics_path = target_metrics_dir / f"{model_safe}_metrics.csv"
         metrics_df.to_csv(metrics_path, index=False)
 
@@ -846,7 +873,9 @@ def perform_evaluation(
         all_summaries.append(row)
 
         if verbose:
-            print(f"Evaluated {model_name} on {target_name}: F1={metrics['F1 (weighted)']:.3f}, MCC={metrics['MCC']:.3f}")
+            print(
+                f"Evaluated {model_name} on {target_name}: F1={metrics['F1 (weighted)']:.3f}, MCC={metrics['MCC']:.3f}"
+            )
 
     # Save evaluation summary
     if all_summaries:

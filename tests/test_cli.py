@@ -22,10 +22,7 @@ def is_cli_available():
         return False
 
 
-skip_if_no_cli = pytest.mark.skipif(
-    not is_cli_available(),
-    reason="respredai CLI not available"
-)
+skip_if_no_cli = pytest.mark.skipif(not is_cli_available(), reason="respredai CLI not available")
 
 
 def run_cli(*args, **kwargs):
@@ -143,9 +140,12 @@ class TestCLI:
         """Test that evaluate command fails with nonexistent models directory."""
         result = run_cli(
             "evaluate",
-            "--models-dir", str(tmp_path / "nonexistent"),
-            "--data", "data.csv",
-            "--output", str(tmp_path / "out")
+            "--models-dir",
+            str(tmp_path / "nonexistent"),
+            "--data",
+            "data.csv",
+            "--output",
+            str(tmp_path / "out"),
         )
 
         assert result.returncode != 0
@@ -162,10 +162,7 @@ class TestCLIIntegration:
         This test actually runs the full pipeline and can take several minutes.
         Run with: pytest -v -m slow
         """
-        result = run_cli(
-            "run", "--config", "example/config_example.ini",
-            timeout=300
-        )
+        result = run_cli("run", "--config", "example/config_example.ini", timeout=300)
 
         assert result.returncode == 0
 
@@ -180,9 +177,11 @@ class TestCLIIntegration:
 
         result = run_cli(
             "train",
-            "--config", "example/config_example.ini",
-            "--output", str(output_dir),
-            timeout=300
+            "--config",
+            "example/config_example.ini",
+            "--output",
+            str(output_dir),
+            timeout=300,
         )
 
         assert result.returncode == 0, f"Train failed: {result.stderr}"
@@ -209,19 +208,24 @@ class TestCLIIntegration:
         # First train models
         train_result = run_cli(
             "train",
-            "--config", "example/config_example.ini",
-            "--output", str(train_output_dir),
-            timeout=300
+            "--config",
+            "example/config_example.ini",
+            "--output",
+            str(train_output_dir),
+            timeout=300,
         )
         assert train_result.returncode == 0, f"Train failed: {train_result.stderr}"
 
         # Then evaluate on the same data (as ground truth)
         eval_result = run_cli(
             "evaluate",
-            "--models-dir", str(train_output_dir / "trained_models"),
-            "--data", "example/data_example.csv",
-            "--output", str(eval_output_dir),
-            timeout=120
+            "--models-dir",
+            str(train_output_dir / "trained_models"),
+            "--data",
+            "example/data_example.csv",
+            "--output",
+            str(eval_output_dir),
+            timeout=120,
         )
 
         assert eval_result.returncode == 0, f"Evaluate failed: {eval_result.stderr}"

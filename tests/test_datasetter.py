@@ -1,7 +1,10 @@
-import pytest
-import pandas as pd
 from textwrap import dedent
+
+import pandas as pd
+import pytest
+
 from respredai.io.config import ConfigHandler, DataSetter
+
 
 class TestDataSetter:
     """Unit tests for DataSetter."""
@@ -59,12 +62,14 @@ class TestDataSetter:
         config_path.write_text(config_text)
         config = ConfigHandler(str(config_path))
 
-        df = pd.DataFrame({
-            "age": [30, 40, 50],
-            "bmi": [20.1, 25.3, 30.0],
-            "group": [1, 1, 2],
-            "y": [0, 1, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "age": [30, 40, 50],
+                "bmi": [20.1, 25.3, 30.0],
+                "group": [1, 1, 2],
+                "y": [0, 1, 0],
+            }
+        )
         df.to_csv(data_path, index=False)
 
         ds = DataSetter(config)
@@ -83,11 +88,13 @@ class TestDataSetter:
         config_path.write_text(config_text)
         config = ConfigHandler(str(config_path))
 
-        df = pd.DataFrame({
-            "age": [10, 20],
-            "bmi": [18.2, 27.5],
-            "y": [0, 1],
-        })
+        df = pd.DataFrame(
+            {
+                "age": [10, 20],
+                "bmi": [18.2, 27.5],
+                "y": [0, 1],
+            }
+        )
         df.to_csv(data_path, index=False)
 
         with pytest.raises(ValueError):
@@ -101,12 +108,14 @@ class TestDataSetter:
         config_path.write_text(config_text)
         config = ConfigHandler(str(config_path))
 
-        df = pd.DataFrame({
-            "age": [10, None],
-            "bmi": [18.2, 27.5],
-            "group": [1, 1],
-            "y": [0, 1],
-        })
+        df = pd.DataFrame(
+            {
+                "age": [10, None],
+                "bmi": [18.2, 27.5],
+                "group": [1, 1],
+                "y": [0, 1],
+            }
+        )
         df.to_csv(data_path, index=False)
 
         with pytest.raises(AssertionError):
@@ -120,13 +129,15 @@ class TestDataSetter:
         config_path.write_text(config_text)
         config = ConfigHandler(str(config_path))
 
-        df = pd.DataFrame({
-            "age": [30, 40],
-            "bmi": [20.1, 25.3],
-            "group": [1, 1],
-            "y1": [0, 1],
-            "y2": [1, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "age": [30, 40],
+                "bmi": [20.1, 25.3],
+                "group": [1, 1],
+                "y1": [0, 1],
+                "y2": [1, 0],
+            }
+        )
         df.to_csv(data_path, index=False)
 
         ds = DataSetter(config)

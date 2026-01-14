@@ -42,6 +42,12 @@ n_jobs = -1
 enable = true
 compression = 3
 
+[Imputation]
+method = none
+strategy = mean
+n_neighbors = 5
+estimator = bayesian_ridge
+
 [Output]
 out_folder = ./output/
 ```
@@ -56,6 +62,7 @@ out_folder = ./output/
 | `[Log]` | Logging verbosity and file name |
 | `[Resources]` | Parallel processing settings |
 | `[ModelSaving]` | Model persistence options |
+| `[Imputation]` | Missing data imputation settings |
 | `[Output]` | Output directory path |
 
 ## Step 3: Validate Configuration (Optional)
@@ -78,6 +85,7 @@ respredai run --config my_config.ini
 
 After the pipeline completes, check your output folder:
 
+- `report.html` - Comprehensive HTML report with all results
 - `metrics/` - Performance metrics with 95% confidence intervals
 - `confusion_matrices/` - Visualization of model performance
 - `models/` - Saved models for feature importance extraction
@@ -102,6 +110,7 @@ respredai feature-importance --output ./output --model LR --target Target1
 | `TabPFN` | TabPFN |
 | `RBF_SVC` | RBF SVM |
 | `Linear_SVC` | Linear SVM |
+| `KNN` | K-Nearest Neighbors |
 
 ## Next Steps
 

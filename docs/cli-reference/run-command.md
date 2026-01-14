@@ -93,7 +93,7 @@ threshold_method = auto
 
 **Parameters:**
 - `models` - Comma-separated list of models to train
-  - Available models: `LR`, `MLP`, `XGB`, `RF`, `CatBoost`, `TabPFN`, `RBF_SVC`, `Linear_SVC`
+  - Available models: `LR`, `MLP`, `XGB`, `RF`, `CatBoost`, `TabPFN`, `RBF_SVC`, `Linear_SVC`, `KNN`
   - Use `respredai list-models` to see all available models with descriptions
 - `outer_folds` - Number of folds for outer cross-validation
   - Used for model evaluation
@@ -179,6 +179,34 @@ compression = 3
   - `3`: Balanced compression (recommended)
   - `9`: Maximum compression (slowest, smallest files)
 
+### [Imputation] Section
+
+Controls missing data imputation (optional).
+
+```ini
+[Imputation]
+method = none
+strategy = mean
+n_neighbors = 5
+estimator = bayesian_ridge
+```
+
+**Parameters:**
+- `method` - Imputation method
+  - `none`: No imputation (default, requires complete data)
+  - `simple`: SimpleImputer from scikit-learn
+  - `knn`: KNNImputer for k-nearest neighbors imputation
+  - `iterative`: IterativeImputer (MissForest-style)
+- `strategy` - Strategy for SimpleImputer (only used when `method = simple`)
+  - `mean`: Replace missing values with column mean (default)
+  - `median`: Replace with column median
+  - `most_frequent`: Replace with most frequent value
+- `n_neighbors` - Number of neighbors for KNNImputer (only used when `method = knn`)
+  - Default: `5`
+- `estimator` - Estimator for IterativeImputer (only used when `method = iterative`)
+  - `bayesian_ridge`: BayesianRidge estimator (default)
+  - `random_forest`: RandomForestRegressor (MissForest-style)
+
 ### [Output] Section
 
 Specifies output location.
@@ -224,8 +252,8 @@ output_folder/
 │   │   └── summary.csv                           # Summary across all models for this target
 │   └── summary_all.csv                           # Global summary across all models and targets
 ├── confusion_matrices/                           # Confusion matrix heatmaps
-│   ├── Confusion_matrices_{model}.png
-│   └── ...
+│   └── Confusion_matrix_{model}_{target}.png     # One PNG per model-target combination
+├── report.html                                   # Comprehensive HTML report
 └── respredai.log                                 # Execution log (if verbosity > 0)
 ```
 
@@ -235,15 +263,25 @@ Each `{model}_metrics_detailed.csv` contains:
 - **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC)
 - **Mean**: Mean value across folds
 - **Std**: Standard deviation across folds
-- **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 10'000 resamples)
-- **CI95_upper**: Upper bound of 95% confidence interval (bootstrap, 10'000 resamples)
+- **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 1,000 resamples)
+- **CI95_upper**: Upper bound of 95% confidence interval (bootstrap, 1,000 resamples)
 
 ### Confusion Matrix Plots
 
-Each `Confusion_matrices_{model}.png` shows:
-- Normalized confusion matrices for all targets
-- Mean F1, MCC, and AUROC scores
-- Color-coded heatmaps (0.0 = poor, 1.0 = perfect)
+Each `Confusion_matrix_{model}_{target}.png` shows:
+- Normalized confusion matrix for a single model-target combination
+- Mean F1, MCC, and AUROC scores with standard deviations
+- Color-coded heatmap (0.0 = poor, 1.0 = perfect)
+
+### HTML Report
+
+The `report.html` file provides a comprehensive, self-contained summary:
+- **Metadata**: Configuration settings, data path, timestamp
+- **Framework Summary**: Pipeline parameters, models, and targets
+- **Results Tables**: Per-target metrics with 95% confidence intervals for each model
+- **Confusion Matrices**: Embedded visualizations in a responsive grid layout
+
+The report can be opened in any web browser and shared without additional dependencies.
 
 ## Model Saving System
 
