@@ -62,10 +62,20 @@ class TestSaveMetricsSummary:
         # Sample-level predictions for bootstrap CI
         y_true = np.array([0, 0, 1, 1, 0, 1, 0, 1, 1, 0])
         y_pred = np.array([0, 1, 1, 1, 0, 0, 0, 1, 1, 0])
-        y_prob = np.array([
-            [0.8, 0.2], [0.3, 0.7], [0.2, 0.8], [0.1, 0.9], [0.9, 0.1],
-            [0.6, 0.4], [0.7, 0.3], [0.2, 0.8], [0.3, 0.7], [0.8, 0.2],
-        ])
+        y_prob = np.array(
+            [
+                [0.8, 0.2],
+                [0.3, 0.7],
+                [0.2, 0.8],
+                [0.1, 0.9],
+                [0.9, 0.1],
+                [0.6, 0.4],
+                [0.7, 0.3],
+                [0.2, 0.8],
+                [0.3, 0.7],
+                [0.8, 0.2],
+            ]
+        )
 
         output_path = tmp_path / "metrics" / "test_metrics.csv"
 
