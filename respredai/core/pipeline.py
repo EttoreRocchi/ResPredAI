@@ -578,21 +578,28 @@ def perform_training(
     X = datasetter.X
     Y = datasetter.Y
 
-    # One-hot encode categorical features
-    categorical_features = X.select_dtypes(include=["object", "category"]).columns.tolist()
-    continuous_features = config_handler.continuous_features
+    # List of categorical columns (non-continuous) - same approach as perform_pipeline
+    categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
-    if categorical_features:
-        X = pd.get_dummies(X, columns=categorical_features, drop_first=True)
+    # One-hot encoding of categorical features using ColumnTransformer
+    ohe_transformer = ColumnTransformer(
+        transformers=[
+            (
+                "ohe",
+                OneHotEncoder(drop=None, sparse_output=False, handle_unknown="ignore"),
+                categorical_cols,
+            )
+        ],
+        remainder="passthrough",
+        verbose_feature_names_out=False,
+    ).set_output(transform="pandas")
 
-    # Sanitize feature names for XGBoost
-    X.columns = [col.replace("<", "").replace(">", "") for col in X.columns]
+    # Apply one-hot encoding
+    X = ohe_transformer.fit_transform(X)
 
-    # Determine features for scaling
-    if continuous_features:
-        numeric_cols_for_scaling = [c for c in continuous_features if c in X.columns]
-    else:
-        numeric_cols_for_scaling = X.select_dtypes(include=[np.number]).columns.tolist()
+    # Clean feature names for XGBoost compatibility (remove <, > characters)
+    X.columns = X.columns.str.replace("<", "_lt_", regex=False)
+    X.columns = X.columns.str.replace(">", "_gt_", regex=False)
 
     # Create output directories
     trained_models_dir = Path(config_handler.out_folder) / "trained_models"
@@ -601,8 +608,8 @@ def perform_training(
     # Store metadata for evaluation
     metadata = {
         "features": list(datasetter.X.columns),
-        "continuous_features": continuous_features if continuous_features else [],
-        "categorical_features": categorical_features,
+        "continuous_features": datasetter.continuous_features,
+        "categorical_features": categorical_cols,
         "targets": list(Y.columns),
         "feature_names_transformed": list(X.columns),
         "feature_dtypes": {col: str(dtype) for col, dtype in datasetter.X.dtypes.items()},
@@ -636,7 +643,7 @@ def perform_training(
             # Get pipeline components
             transformer, grid = get_pipeline(
                 model_name=model,
-                continuous_cols=numeric_cols_for_scaling,
+                continuous_cols=datasetter.continuous_features,
                 n_jobs=config_handler.n_jobs,
                 rnd_state=config_handler.seed,
                 inner_folds=config_handler.inner_folds,
@@ -792,10 +799,12 @@ def perform_evaluation(
     # One-hot encode categorical features (same as training)
     categorical_features = metadata["categorical_features"]
     if categorical_features:
-        X_new = pd.get_dummies(X_new, columns=categorical_features, drop_first=True)
+        # Use drop_first=False to match OneHotEncoder(drop=None) used in training
+        X_new = pd.get_dummies(X_new, columns=categorical_features, drop_first=False)
 
-    # Sanitize feature names
-    X_new.columns = [col.replace("<", "").replace(">", "") for col in X_new.columns]
+    # Clean feature names for XGBoost compatibility (same as training)
+    X_new.columns = X_new.columns.str.replace("<", "_lt_", regex=False)
+    X_new.columns = X_new.columns.str.replace(">", "_gt_", regex=False)
 
     # Align columns with training (add missing dummy columns as 0, remove extra)
     expected_features = metadata["feature_names_transformed"]
