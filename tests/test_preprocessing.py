@@ -124,7 +124,7 @@ class TestPreprocessingConsistency:
 
         # Method 1: OneHotEncoder
         ohe = OneHotEncoder(drop=None, sparse_output=False, handle_unknown="ignore")
-        ohe_result = ohe.fit_transform(df[["category"]])
+        _ = ohe.fit_transform(df[["category"]])
         ohe_columns = [f"category_{cat}" for cat in ohe.categories_[0]]
 
         # Method 2: pd.get_dummies

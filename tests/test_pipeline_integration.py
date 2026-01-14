@@ -1,7 +1,6 @@
 """Integration tests for the full pipeline with synthetic data."""
 
 import json
-import warnings
 from pathlib import Path
 from textwrap import dedent
 
