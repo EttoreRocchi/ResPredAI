@@ -29,24 +29,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 
 [project.scripts]
 respredai = "respredai.cli:main"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.8.0",
-]
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.5.0",
-]
-
 [tool.setuptools.dynamic]
 version = {attr = "respredai.__version__"}
 dependencies = {file = ["requirements.txt"]}
+optional-dependencies = {dev = {file = ["dev-requirements.txt"]}, docs = {file = ["docs-requirements.txt"]}}
 
 [project.urls]
 "Homepage" = "https://github.com/EttoreRocchi/ResPredAI"

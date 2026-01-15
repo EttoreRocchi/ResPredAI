@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'mkdocs.yml'
       - 'respredai/**'
   workflow_dispatch:
 
@@ -35,17 +34,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-docs-${{ hashFiles('pyproject.toml') }}
+          key: ${{ runner.os }}-pip-docs-${{ hashFiles('docs-requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-docs-
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install mkdocs mkdocs-material
+          pip install -r docs-requirements.txt
 
       - name: Build docs
-        run: mkdocs build
+        run: sphinx-build -b html docs docs/_build/html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -53,7 +52,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'site'
+          path: 'docs/_build/html'
 
   deploy:
     environment:

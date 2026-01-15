@@ -2,6 +2,14 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.4.1] - 2026-01-15
+
+### Changed
+- Migrated documentation from MkDocs to Sphinx
+- Documentation dependencies now loaded dynamically from `docs-requirements.txt`
+- Development dependencies now loaded dynamically from `dev-requirements.txt`
+
+
 ## [1.4.0] - 2026-01-14
 
 ### Added
@@ -118,7 +126,7 @@ If you use ResPredAI in your research, please cite:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/EttoreRocchi/ResPredAI/blob/main/LICENSE) file for details.
 
 ## Funding
 
