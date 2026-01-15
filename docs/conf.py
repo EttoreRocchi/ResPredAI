@@ -1,18 +1,25 @@
 # Configuration file for the Sphinx documentation builder.
 
-import sys
+import re
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from respredai import __version__
+def get_version():
+    """Read version from respredai/__init__.py without importing."""
+    init_file = Path(__file__).parent.parent / "respredai" / "__init__.py"
+    content = init_file.read_text()
+    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+    if match:
+        return match.group(1)
+    return "unknown"
+
 
 project = "ResPredAI"
 copyright = "2025, Ettore Rocchi"
 author = "Ettore Rocchi"
 
 # The full version, including alpha/beta/rc tags
-release = __version__
+release = get_version()
 
 # -- General configuration ---------------------------------------------------
 
