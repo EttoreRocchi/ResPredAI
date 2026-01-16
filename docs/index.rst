@@ -47,20 +47,28 @@ Output Structure
 
 The pipeline generates:
 
+- **HTML report**: Comprehensive self-contained report with metrics, confusion matrices, and configuration summary
 - **Confusion matrices**: PNG files with heatmaps showing model performance
-- **Detailed metrics**: CSV files with precision, recall, F1, MCC, balanced accuracy, AUROC
+- **Detailed metrics**: CSV files with precision, recall, F1, MCC, balanced accuracy, AUROC and 95% confidence intervals
 - **Trained models**: Saved models for resumption and feature importance extraction
 - **Feature importance**: Plots and CSV files showing feature importance/coefficients
 
 ::
 
     output_folder/
-    ├── models/                          # Trained models (if enabled)
-    ├── trained_models/                  # Models for cross-dataset validation
-    ├── metrics/                         # Detailed performance metrics
-    ├── feature_importance/              # Feature importance outputs
-    ├── confusion_matrices/              # Confusion matrix heatmaps
-    └── respredai.log                    # Execution log
+    ├── models/                                       # Trained models (if enabled)
+    │   └── {Model}_{Target}_models.joblib
+    ├── metrics/                                      # Detailed metrics
+    │   ├── {target}/
+    │   │   ├── {model}_metrics_detailed.csv          # Metrics with 95% CI
+    │   │   └── summary.csv                           # Summary for this target
+    │   └── summary_all.csv                           # Global summary
+    ├── confusion_matrices/                           # Confusion matrix heatmaps
+    │   └── Confusion_matrix_{model}_{target}.png
+    ├── feature_importance/                           # Feature importance (optional)
+    │   └── {target}/{model}_feature_importance.csv
+    ├── report.html                                   # Comprehensive HTML report
+    └── respredai.log                                 # Execution log
 
 Citation
 --------
