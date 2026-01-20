@@ -66,10 +66,13 @@ predictions CSV Format
 
 .. code-block:: text
 
-    sample_id,y_true,y_pred,y_prob
-    0,1,1,0.73
-    1,0,0,0.21
-    2,1,0,0.38
+    sample_id,y_true,y_pred,y_prob,uncertainty,is_uncertain
+    0,1,1,0.73,0.46,False
+    1,0,0,0.21,0.42,False
+    2,1,0,0.48,0.96,True
+
+- **uncertainty**: Score from 0 (confident) to 1 (uncertain), based on distance from threshold
+- **is_uncertain**: True if prediction probability is within ``margin`` of threshold
 
 metrics CSV Format
 ~~~~~~~~~~~~~~~~~~
@@ -87,6 +90,11 @@ metrics CSV Format
     MCC,0.28
     Balanced Acc,0.62
     AUROC,0.71
+    VME,0.67
+    ME,0.09
+
+- **VME** (Very Major Error): Rate of false susceptible predictions (predicted 0 when actually 1)
+- **ME** (Major Error): Rate of false resistant predictions (predicted 1 when actually 0)
 
 evaluation_summary.csv
 ~~~~~~~~~~~~~~~~~~~~~~

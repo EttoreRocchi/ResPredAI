@@ -119,20 +119,62 @@ Use ``respredai list-models`` to see all available models.
 
     calibrate_threshold = true
     threshold_method = auto
+    threshold_objective = youden
+    vme_cost = 1.0
+    me_cost = 1.0
 
-- **calibrate_threshold**: Enable decision threshold optimization using Youden's J statistic
+- **calibrate_threshold**: Enable decision threshold optimization
 
-  - ``true``: Calibrate threshold to maximize Youden's J (Sensitivity + Specificity - 1)
+  - ``true``: Calibrate threshold using the specified objective
   - ``false``: Use default threshold of 0.5
 
 - **threshold_method**: Method for threshold calibration (only used when ``calibrate_threshold = true``)
 
   - ``auto``: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
-  - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold maximizing Youden's J across all concatenated samples
+  - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold across all concatenated samples
   - ``cv``: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
   - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
 
-5. Adjust Resources
+- **threshold_objective**: Objective function for threshold optimization
+
+  - ``youden``: Maximize Youden's J statistic (Sensitivity + Specificity - 1) - balanced approach
+  - ``f1``: Maximize F1 score - balances precision and recall
+  - ``f2``: Maximize F2 score - prioritizes recall over precision (reduces VME at potential cost of increased ME)
+  - ``cost_sensitive``: Minimize weighted error cost using ``vme_cost`` and ``me_cost``
+
+- **vme_cost** / **me_cost**: Cost weights for cost-sensitive threshold optimization
+
+  - VME (Very Major Error): Predicted susceptible when actually resistant
+  - ME (Major Error): Predicted resistant when actually susceptible
+  - Higher ``vme_cost`` relative to ``me_cost`` will shift threshold to reduce false susceptible predictions
+
+5. Configure Uncertainty Quantification (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    [Uncertainty]
+    margin = 0.1
+
+- **margin**: Margin around the decision threshold for flagging uncertain predictions (0-0.5)
+
+  - Predictions with probability within ``margin`` of the threshold are flagged as uncertain
+  - Default: 0.1
+  - Uncertainty scores and flags are included in evaluation output
+
+- **Uncertainty score computation**:
+
+  .. code-block:: text
+
+      distance = |probability - threshold|
+      max_distance = max(threshold, 1 - threshold)
+      uncertainty = 1 - (distance / max_distance)
+      is_uncertain = distance < margin
+
+  - Score ranges from 0 (confident, at probability extremes) to 1 (uncertain, at threshold)
+  - When threshold is calibrated, uncertainty is computed relative to the calibrated threshold
+
+6. Adjust Resources
 ~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -144,7 +186,7 @@ Use ``respredai list-models`` to see all available models.
 - ``1``: No parallelization (useful for debugging)
 - ``N``: Use N cores
 
-6. Configure Model Saving
+7. Configure Model Saving
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -156,7 +198,7 @@ Use ``respredai list-models`` to see all available models.
 - **enable**: Set to ``true`` to save models every folds
 - **compression**: 0-9 (0=no compression, 3=balanced, 9=maximum)
 
-7. Set Output Location
+8. Set Output Location
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini

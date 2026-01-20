@@ -323,6 +323,7 @@ The pipeline generates the following output structure:
     ├── confusion_matrices/                           # Confusion matrix heatmaps
     │   └── Confusion_matrix_{model}_{target}.png     # One PNG per model-target combination
     ├── report.html                                   # Comprehensive HTML report
+    ├── reproducibility.json                          # Reproducibility manifest
     └── respredai.log                                 # Execution log (if verbosity > 0)
 
 Metrics Files
@@ -330,7 +331,7 @@ Metrics Files
 
 Each ``{model}_metrics_detailed.csv`` contains:
 
-- **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC)
+- **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC, VME, ME)
 - **Mean**: Mean value across folds
 - **Std**: Standard deviation across folds
 - **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 1,000 resamples)

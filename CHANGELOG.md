@@ -2,6 +2,26 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.5.0] - 2026-01-20
+
+### Added
+- **VME/ME report**:
+  - VME (Very Major Error): Predicted susceptible when actually resistant
+  - ME (Major Error): Predicted resistant when actually susceptible
+- **Flexible threshold objectives**:
+  - `threshold_objective` config option: `youden` (default), `f1`, `f2`, `cost_sensitive`
+  - Cost-sensitive optimization with configurable `vme_cost` and `me_cost` weights
+- **Per-prediction uncertainty quantification** to flag uncertain predictions near decision threshold
+  - `uncertainty_margin` config option (default: 0.1) defines margin around threshold
+  - Predictions within margin are flagged as uncertain in evaluation output
+  - Uncertainty scores (0-1) provided for each prediction
+- **Reproducibility manifest** (`reproducibility.json`) generated with `run` and `train` commands with environment info, data fingerprint, full configuration settings
+
+### Changed
+- HTML report framework summary now displays threshold objective and cost weights (when applicable)
+- Evaluation output now includes `uncertainty` and `is_uncertain` columns
+
+
 ## [1.4.1] - 2026-01-15
 
 ### Changed

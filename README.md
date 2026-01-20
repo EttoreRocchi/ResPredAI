@@ -83,6 +83,15 @@ outer_folds = 5
 inner_folds = 3
 calibrate_threshold = false
 threshold_method = auto
+# Threshold optimization objective: youden (default), f1, f2, cost_sensitive
+threshold_objective = youden
+# Cost weights for cost_sensitive objective (VME = false susceptible, ME = false resistant)
+vme_cost = 1.0
+me_cost = 1.0
+
+[Uncertainty]
+# Margin around threshold for flagging uncertain predictions (0-0.5)
+margin = 0.1
 
 [Reproducibility]
 seed = 42
@@ -221,7 +230,7 @@ to show the installed version of ResPredAI.
 
 The pipeline generates:
 - **Confusion matrices**: PNG files with heatmaps showing model performance for each target
-- **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC) with mean, std, and 95% CI
+- **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC, VME, ME) with mean, std, and 95% CI
 - **Trained models**: Saved models for resumption and feature importance extraction (if model saving enabled)
 - **Feature importance**: Plots and CSV files showing feature importance/coefficients (generated separately)
 - **Log files**: Detailed execution logs (if verbosity > 0)

@@ -114,12 +114,13 @@ Output Structure
 ::
 
     output_folder/
-    └── trained_models/
-        ├── LR_Target1.joblib
-        ├── LR_Target2.joblib
-        ├── RF_Target1.joblib
-        ├── ...
-        └── training_metadata.json
+    ├── trained_models/
+    │   ├── LR_Target1.joblib
+    │   ├── LR_Target2.joblib
+    │   ├── RF_Target1.joblib
+    │   ├── ...
+    │   └── training_metadata.json
+    └── reproducibility.json                  # Reproducibility manifest
 
 Model Bundle Contents
 ~~~~~~~~~~~~~~~~~~~~~
