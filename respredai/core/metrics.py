@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.metrics import (
     balanced_accuracy_score,
     f1_score,
+    fbeta_score,
     matthews_corrcoef,
     precision_score,
     recall_score,
@@ -44,6 +45,121 @@ def youden_j_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return tpr + tnr - 1
 
 
+def f1_threshold_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Calculate F1 score for threshold optimization.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True binary labels (0 or 1)
+    y_pred : np.ndarray
+        Predicted binary labels (0 or 1)
+
+    Returns
+    -------
+    float
+        F1 score for the positive class (Resistant)
+    """
+    return f1_score(y_true, y_pred, pos_label=1, zero_division=0)
+
+
+def f2_threshold_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Calculate F2 score (recall-weighted) for threshold optimization.
+
+    F2 weights recall higher than precision, reducing false negatives.
+    Useful in AMR where missing resistance (VME) is more costly.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True binary labels (0 or 1)
+    y_pred : np.ndarray
+        Predicted binary labels (0 or 1)
+
+    Returns
+    -------
+    float
+        F2 score for the positive class (Resistant)
+    """
+    return fbeta_score(y_true, y_pred, beta=2, pos_label=1, zero_division=0)
+
+
+def cost_sensitive_score(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    vme_cost: float = 1.0,
+    me_cost: float = 1.0,
+) -> float:
+    """
+    Calculate negative weighted error cost for threshold optimization.
+
+    Minimizes: vme_cost * VME + me_cost * ME
+    Returns negative cost so that maximizing the score minimizes cost.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True binary labels (0 = Susceptible, 1 = Resistant)
+    y_pred : np.ndarray
+        Predicted binary labels
+    vme_cost : float
+        Cost weight for Very Major Errors (false negatives for resistance)
+    me_cost : float
+        Cost weight for Major Errors (false positives for resistance)
+
+    Returns
+    -------
+    float
+        Negative weighted error cost (higher is better)
+    """
+    recall_1 = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
+    recall_0 = recall_score(y_true, y_pred, pos_label=0, zero_division=0)
+    vme = 1 - recall_1  # False negative rate for resistance
+    me = 1 - recall_0  # False positive rate for resistance
+    cost = vme_cost * vme + me_cost * me
+    return -cost  # Negative so we can maximize
+
+
+def get_threshold_scorer(
+    objective: str,
+    vme_cost: float = 1.0,
+    me_cost: float = 1.0,
+):
+    """
+    Get the appropriate scorer function for threshold optimization.
+
+    Parameters
+    ----------
+    objective : str
+        One of 'youden', 'f1', 'f2', 'cost_sensitive'
+    vme_cost : float
+        Cost weight for VME (only used if objective='cost_sensitive')
+    me_cost : float
+        Cost weight for ME (only used if objective='cost_sensitive')
+
+    Returns
+    -------
+    Callable
+        Scorer function that takes (y_true, y_pred) and returns a score
+    """
+    if objective == "youden":
+        return youden_j_score
+    elif objective == "f1":
+        return f1_threshold_score
+    elif objective == "f2":
+        return f2_threshold_score
+    elif objective == "cost_sensitive":
+
+        def cost_scorer(y_true, y_pred):
+            return cost_sensitive_score(y_true, y_pred, vme_cost, me_cost)
+
+        return cost_scorer
+    else:
+        raise ValueError(f"Unknown threshold objective: {objective}")
+
+
 def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
     """
     Calculate comprehensive classification metrics.
@@ -73,6 +189,8 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
         "MCC": matthews_corrcoef(y_true, y_pred),
         "Balanced Acc": balanced_accuracy_score(y_true, y_pred),
         "AUROC": roc_auc_score(y_true, y_prob[:, 1]) if len(np.unique(y_true)) > 1 else np.nan,
+        "VME": 1 - recall_score(y_true, y_pred, pos_label=1, zero_division=0),
+        "ME": 1 - recall_score(y_true, y_pred, pos_label=0, zero_division=0),
     }
 
 
@@ -119,6 +237,16 @@ def _auroc_metric(y_true, y_pred, y_prob):
     return roc_auc_score(y_true, y_prob[:, 1])
 
 
+def _vme_metric(y_true, y_pred, y_prob):
+    """VME rate: 1 - Recall(1) = FN / (FN + TP)."""
+    return 1 - recall_score(y_true, y_pred, pos_label=1, zero_division=0)
+
+
+def _me_metric(y_true, y_pred, y_prob):
+    """ME rate: 1 - Recall(0) = FP / (FP + TN)."""
+    return 1 - recall_score(y_true, y_pred, pos_label=0, zero_division=0)
+
+
 # Mapping from metric names to wrapper functions
 METRIC_FUNCTIONS = {
     "Precision (0)": _precision_0_metric,
@@ -131,6 +259,8 @@ METRIC_FUNCTIONS = {
     "MCC": _mcc_metric,
     "Balanced Acc": _balanced_acc_metric,
     "AUROC": _auroc_metric,
+    "VME": _vme_metric,
+    "ME": _me_metric,
 }
 
 
@@ -282,3 +412,47 @@ def save_metrics_summary(
     summary_df.to_csv(output_path, index=False)
 
     return summary_df
+
+
+def calculate_uncertainty(
+    y_prob: np.ndarray,
+    threshold: float,
+    margin: float = 0.1,
+) -> tuple:
+    """
+    Calculate uncertainty scores for predictions.
+
+    A prediction is flagged as uncertain if the probability is within
+    `margin` of the decision threshold.
+
+    Parameters
+    ----------
+    y_prob : np.ndarray
+        Predicted probabilities for class 1 (Resistant)
+    threshold : float
+        Decision threshold
+    margin : float
+        Margin around threshold for flagging uncertainty (default 0.1)
+
+    Returns
+    -------
+    tuple
+        (uncertainty_scores, is_uncertain)
+        - uncertainty_scores: 0 = most certain, 1 = most uncertain (at threshold)
+        - is_uncertain: boolean array, True if within margin of threshold
+    """
+    # Distance from threshold (0 at threshold, up to 0.5 at extremes)
+    distance_from_threshold = np.abs(y_prob - threshold)
+
+    # Normalize to 0-1 scale where 0 = most certain, 1 = most uncertain
+    # Max possible distance is max(threshold, 1-threshold)
+    max_distance = max(threshold, 1 - threshold)
+    certainty_score = distance_from_threshold / max_distance
+
+    # Uncertainty is inverse of certainty
+    uncertainty_scores = 1 - certainty_score
+
+    # Flag as uncertain if within margin
+    is_uncertain = distance_from_threshold < margin
+
+    return uncertainty_scores, is_uncertain

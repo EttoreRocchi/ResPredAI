@@ -6,6 +6,11 @@ import pandas as pd
 from respredai.core.metrics import (
     METRIC_FUNCTIONS,
     bootstrap_ci_samples,
+    calculate_uncertainty,
+    cost_sensitive_score,
+    f1_threshold_score,
+    f2_threshold_score,
+    get_threshold_scorer,
     metric_dict,
     save_metrics_summary,
     youden_j_score,
@@ -76,6 +81,8 @@ class TestMetricDict:
             "MCC",
             "Balanced Acc",
             "AUROC",
+            "VME",
+            "ME",
         ]
         for key in expected_keys:
             assert key in metrics, f"Missing metric: {key}"
@@ -325,6 +332,8 @@ class TestSaveMetricsSummary:
                 "MCC": 0.5,
                 "Balanced Acc": 0.75,
                 "AUROC": 0.8,
+                "VME": 0.4,
+                "ME": 0.1,
             },
             {
                 "Precision (0)": 0.82,
@@ -337,6 +346,8 @@ class TestSaveMetricsSummary:
                 "MCC": 0.52,
                 "Balanced Acc": 0.76,
                 "AUROC": 0.82,
+                "VME": 0.38,
+                "ME": 0.12,
             },
         ]
 
@@ -380,7 +391,7 @@ class TestSaveMetricsSummary:
 
         # Check file content
         loaded_df = pd.read_csv(output_path)
-        assert len(loaded_df) == 10  # 10 metrics
+        assert len(loaded_df) == 12
 
     def test_save_metrics_summary_creates_parent_dirs(self, tmp_path):
         """Test that save_metrics_summary creates parent directories."""
@@ -403,3 +414,151 @@ class TestSaveMetricsSummary:
         )
 
         assert output_path.exists()
+
+
+class TestThresholdScorers:
+    """Unit tests for threshold scoring functions."""
+
+    def test_f1_threshold_score_perfect(self):
+        """Test F1 threshold scorer with perfect predictions."""
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        score = f1_threshold_score(y_true, y_pred)
+        assert score == 1.0
+
+    def test_f1_threshold_score_no_true_positives(self):
+        """Test F1 threshold scorer with no true positives."""
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 0, 0])
+        score = f1_threshold_score(y_true, y_pred)
+        assert score == 0.0
+
+    def test_f2_threshold_score_perfect(self):
+        """Test F2 threshold scorer with perfect predictions."""
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        score = f2_threshold_score(y_true, y_pred)
+        assert score == 1.0
+
+    def test_f2_weights_recall_higher(self):
+        """Test that F2 weights recall higher than precision."""
+        y_true = np.array([0, 0, 1, 1, 1, 1])
+        # High recall (3/4), lower precision (3/4)
+        y_pred_high_recall = np.array([0, 1, 1, 1, 1, 0])
+        # Lower recall (2/4), high precision (2/2)
+        y_pred_high_precision = np.array([0, 0, 1, 1, 0, 0])
+
+        f2_high_recall = f2_threshold_score(y_true, y_pred_high_recall)
+        f2_high_precision = f2_threshold_score(y_true, y_pred_high_precision)
+
+        # F2 should favor higher recall
+        assert f2_high_recall > f2_high_precision
+
+    def test_cost_sensitive_score_equal_weights(self):
+        """Test cost sensitive scorer with equal weights."""
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        score = cost_sensitive_score(y_true, y_pred, vme_cost=1.0, me_cost=1.0)
+        assert score == 0.0  # Perfect predictions, no cost
+
+    def test_cost_sensitive_score_vme_weighted(self):
+        """Test that higher VME cost penalizes false negatives more."""
+        y_true = np.array([0, 0, 1, 1])
+        # One FN (VME) - predicting susceptible when resistant
+        y_pred_fn = np.array([0, 0, 0, 1])
+        # One FP (ME) - predicting resistant when susceptible
+        y_pred_fp = np.array([0, 1, 1, 1])
+
+        # With higher VME cost, FN should have lower (more negative) score
+        score_fn = cost_sensitive_score(y_true, y_pred_fn, vme_cost=5.0, me_cost=1.0)
+        score_fp = cost_sensitive_score(y_true, y_pred_fp, vme_cost=5.0, me_cost=1.0)
+
+        assert score_fn < score_fp
+
+    def test_get_threshold_scorer_youden(self):
+        """Test get_threshold_scorer returns youden_j_score."""
+        scorer = get_threshold_scorer("youden")
+        assert scorer == youden_j_score
+
+    def test_get_threshold_scorer_f1(self):
+        """Test get_threshold_scorer returns f1 scorer."""
+        scorer = get_threshold_scorer("f1")
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        assert scorer(y_true, y_pred) == 1.0
+
+    def test_get_threshold_scorer_f2(self):
+        """Test get_threshold_scorer returns f2 scorer."""
+        scorer = get_threshold_scorer("f2")
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        assert scorer(y_true, y_pred) == 1.0
+
+    def test_get_threshold_scorer_cost_sensitive(self):
+        """Test get_threshold_scorer returns cost sensitive scorer."""
+        scorer = get_threshold_scorer("cost_sensitive", vme_cost=5.0, me_cost=1.0)
+        y_true = np.array([0, 0, 1, 1])
+        y_pred = np.array([0, 0, 1, 1])
+        assert scorer(y_true, y_pred) == 0.0
+
+    def test_get_threshold_scorer_invalid(self):
+        """Test get_threshold_scorer raises on invalid objective."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown threshold objective"):
+            get_threshold_scorer("invalid")
+
+
+class TestUncertainty:
+    """Unit tests for uncertainty quantification."""
+
+    def test_calculate_uncertainty_at_threshold(self):
+        """Test that predictions at threshold have maximum uncertainty."""
+        y_prob = np.array([0.5])
+        threshold = 0.5
+        uncertainty, is_uncertain = calculate_uncertainty(y_prob, threshold, margin=0.1)
+        assert uncertainty[0] == 1.0  # Maximum uncertainty
+        assert is_uncertain[0]
+
+    def test_calculate_uncertainty_at_extremes(self):
+        """Test that predictions at extremes have minimum uncertainty."""
+        y_prob = np.array([0.0, 1.0])
+        threshold = 0.5
+        uncertainty, is_uncertain = calculate_uncertainty(y_prob, threshold, margin=0.1)
+        assert uncertainty[0] == 0.0  # Minimum uncertainty
+        assert uncertainty[1] == 0.0
+        assert not is_uncertain[0]
+        assert not is_uncertain[1]
+
+    def test_calculate_uncertainty_margin(self):
+        """Test margin-based uncertainty flagging."""
+        y_prob = np.array([0.45, 0.55, 0.3, 0.7])
+        threshold = 0.5
+        margin = 0.1
+        _, is_uncertain = calculate_uncertainty(y_prob, threshold, margin)
+        # 0.45 and 0.55 are within margin (|0.5 - x| < 0.1)
+        assert is_uncertain[0]
+        assert is_uncertain[1]
+        # 0.3 and 0.7 are outside margin
+        assert not is_uncertain[2]
+        assert not is_uncertain[3]
+
+    def test_calculate_uncertainty_asymmetric_threshold(self):
+        """Test uncertainty with asymmetric threshold."""
+        y_prob = np.array([0.0, 0.3, 1.0])
+        threshold = 0.3
+        uncertainty, _ = calculate_uncertainty(y_prob, threshold, margin=0.1)
+        # At threshold should be most uncertain
+        assert uncertainty[1] == 1.0
+        # At 0.0, distance is 0.3, max_distance is 0.7, certainty = 0.3/0.7
+        assert 0 < uncertainty[0] < 1
+        # At 1.0, distance is 0.7, max_distance is 0.7, certainty = 1.0
+        assert uncertainty[2] == 0.0
+
+    def test_calculate_uncertainty_returns_numpy_arrays(self):
+        """Test that calculate_uncertainty returns numpy arrays."""
+        y_prob = np.array([0.3, 0.5, 0.7])
+        threshold = 0.5
+        uncertainty, is_uncertain = calculate_uncertainty(y_prob, threshold)
+        assert isinstance(uncertainty, np.ndarray)
+        assert isinstance(is_uncertain, np.ndarray)

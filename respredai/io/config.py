@@ -22,6 +22,10 @@ class ConfigHandler:
     inner_folds: int
     calibrate_threshold: bool
     threshold_method: str
+    threshold_objective: str
+    vme_cost: float
+    me_cost: float
+    uncertainty_margin: float
     seed: int
     verbosity: int
     log_basename: str
@@ -71,6 +75,14 @@ class ConfigHandler:
             "Pipeline", "calibrate_threshold", fallback=False
         )
         self.threshold_method = config.get("Pipeline", "threshold_method", fallback="auto").lower()
+        self.threshold_objective = config.get(
+            "Pipeline", "threshold_objective", fallback="youden"
+        ).lower()
+        self.vme_cost = config.getfloat("Pipeline", "vme_cost", fallback=1.0)
+        self.me_cost = config.getfloat("Pipeline", "me_cost", fallback=1.0)
+
+        # Section: Uncertainty
+        self.uncertainty_margin = config.getfloat("Uncertainty", "margin", fallback=0.1)
 
         # Section: Reproducibility
         self.seed = config.getint("Reproducibility", "seed")
@@ -98,6 +110,26 @@ class ConfigHandler:
         if self.threshold_method not in ["auto", "oof", "cv"]:
             raise ValueError(
                 f"Threshold method must be 'auto', 'oof', or 'cv', got '{self.threshold_method}'"
+            )
+
+        # Validate threshold objective
+        valid_objectives = ["youden", "f1", "f2", "cost_sensitive"]
+        if self.threshold_objective not in valid_objectives:
+            raise ValueError(
+                f"Threshold objective must be one of {valid_objectives}, "
+                f"got '{self.threshold_objective}'"
+            )
+
+        # Validate cost weights
+        if self.vme_cost <= 0:
+            raise ValueError(f"vme_cost must be positive, got {self.vme_cost}")
+        if self.me_cost <= 0:
+            raise ValueError(f"me_cost must be positive, got {self.me_cost}")
+
+        # Validate uncertainty margin
+        if not 0 < self.uncertainty_margin < 0.5:
+            raise ValueError(
+                f"Uncertainty margin must be between 0 and 0.5, got {self.uncertainty_margin}"
             )
 
         # Section: Imputation

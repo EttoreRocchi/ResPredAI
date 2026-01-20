@@ -19,7 +19,7 @@ from sklearn.model_selection import (
 )
 from sklearn.preprocessing import OneHotEncoder
 
-from respredai.core.metrics import metric_dict, save_metrics_summary, youden_j_score
+from respredai.core.metrics import metric_dict, save_metrics_summary
 from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
 from respredai.core.pipe import get_pipeline
 from respredai.io.config import ConfigHandler, DataSetter
@@ -300,18 +300,42 @@ def perform_pipeline(
                                 **cv_fit_params,
                             )
 
-                            # Calculate ROC curve and find optimal threshold using Youden's J
-                            fpr, tpr, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
-                            youden_j = tpr - fpr
-                            best_threshold = thresholds[np.argmax(youden_j)]
+                            # Get threshold scorer based on configured objective
+                            from respredai.core.metrics import get_threshold_scorer
+
+                            threshold_scorer = get_threshold_scorer(
+                                config_handler.threshold_objective,
+                                config_handler.vme_cost,
+                                config_handler.me_cost,
+                            )
+
+                            # Calculate ROC curve to get candidate thresholds
+                            _, _, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
+
+                            # Find optimal threshold by evaluating scorer at each threshold
+                            best_score = float("-inf")
+                            best_threshold = 0.5
+                            for thresh in thresholds:
+                                y_pred_thresh = (y_pred_proba_oof[:, 1] >= thresh).astype(int)
+                                score = threshold_scorer(y_train.values, y_pred_thresh)
+                                if score > best_score:
+                                    best_score = score
+                                    best_threshold = thresh
 
                             # The best_estimator is already trained, use it as the final classifier
                             best_classifier = best_estimator
 
                         else:  # threshold_method == "cv"
                             # Method 2: TunedThresholdClassifierCV approach
-                            # Create Youden's J scorer
-                            youden_scorer = make_scorer(youden_j_score)
+                            # Create scorer based on threshold objective
+                            from respredai.core.metrics import get_threshold_scorer
+
+                            threshold_scorer_fn = get_threshold_scorer(
+                                config_handler.threshold_objective,
+                                config_handler.vme_cost,
+                                config_handler.me_cost,
+                            )
+                            objective_scorer = make_scorer(threshold_scorer_fn)
 
                             # Set best hyperparameters on the unfitted estimator
                             grid.estimator.set_params(**best_params)
@@ -327,7 +351,7 @@ def perform_pipeline(
                             tuned_model = TunedThresholdClassifierCV(
                                 estimator=grid.estimator,
                                 cv=inner_tuner_cv,
-                                scoring=youden_scorer,
+                                scoring=objective_scorer,
                                 n_jobs=1,
                             )
 
@@ -404,6 +428,8 @@ def perform_pipeline(
                         "MCC": np.nan,
                         "Balanced Acc": np.nan,
                         "AUROC": np.nan,
+                        "VME": np.nan,
+                        "ME": np.nan,
                     }
                     all_metrics[target].append(nan_metrics)
                     f1scores[target].append(np.nan)
@@ -547,6 +573,17 @@ def perform_pipeline(
     except Exception as e:
         if config_handler.verbosity:
             config_handler.logger.warning(f"Failed to generate HTML report: {e}")
+
+    # Generate reproducibility manifest
+    from respredai.io.reproducibility import (
+        create_reproducibility_manifest,
+        save_reproducibility_manifest,
+    )
+
+    manifest = create_reproducibility_manifest(config_handler, datasetter)
+    save_reproducibility_manifest(manifest, Path(config_handler.out_folder))
+    if config_handler.verbosity:
+        config_handler.logger.info("Reproducibility manifest saved.")
 
     if config_handler.verbosity:
         config_handler.logger.info("Analysis completed.")
@@ -699,11 +736,25 @@ def perform_training(
                     **cv_fit_params,
                 )[:, 1]
 
-                # Find optimal threshold using Youden's J
-                fpr, tpr, thresholds = roc_curve(y, y_pred_proba_oof)
-                youden_j = tpr - fpr
-                best_idx = np.argmax(youden_j)
-                best_threshold = thresholds[best_idx]
+                # Find optimal threshold using configured objective
+                from respredai.core.metrics import get_threshold_scorer
+
+                threshold_scorer = get_threshold_scorer(
+                    config_handler.threshold_objective,
+                    config_handler.vme_cost,
+                    config_handler.me_cost,
+                )
+
+                _, _, thresholds = roc_curve(y, y_pred_proba_oof)
+
+                best_score = float("-inf")
+                best_threshold = 0.5
+                for thresh in thresholds:
+                    y_pred_thresh = (y_pred_proba_oof >= thresh).astype(int)
+                    score = threshold_scorer(y.values, y_pred_thresh)
+                    if score > best_score:
+                        best_score = score
+                        best_threshold = thresh
 
             # Save model bundle
             model_bundle = {
@@ -739,6 +790,17 @@ def perform_training(
 
     if progress_callback:
         progress_callback.stop()
+
+    # Generate reproducibility manifest
+    from respredai.io.reproducibility import (
+        create_reproducibility_manifest,
+        save_reproducibility_manifest,
+    )
+
+    manifest = create_reproducibility_manifest(config_handler, datasetter)
+    save_reproducibility_manifest(manifest, Path(config_handler.out_folder))
+    if config_handler.verbosity:
+        config_handler.logger.info("Reproducibility manifest saved.")
 
     if config_handler.verbosity:
         config_handler.logger.info("Training completed.")
@@ -853,9 +915,16 @@ def perform_evaluation(
         metrics = metric_dict(y_true=y_true, y_pred=y_pred, y_prob=y_prob)
         results[f"{model_name}_{target_name}"] = metrics
 
-        # Save predictions
+        # Save predictions with uncertainty
         model_safe = model_name.replace(" ", "_")
         target_safe = target_name.replace(" ", "_")
+
+        # Calculate uncertainty scores
+        from respredai.core.metrics import calculate_uncertainty
+
+        uncertainty_scores, is_uncertain = calculate_uncertainty(
+            y_prob[:, 1], threshold, margin=0.1
+        )
 
         pred_df = pd.DataFrame(
             {
@@ -863,6 +932,8 @@ def perform_evaluation(
                 "y_true": y_true,
                 "y_pred": y_pred,
                 "y_prob": y_prob[:, 1],
+                "uncertainty": uncertainty_scores,
+                "is_uncertain": is_uncertain,
             }
         )
         pred_path = predictions_dir / f"{model_safe}_{target_safe}_predictions.csv"

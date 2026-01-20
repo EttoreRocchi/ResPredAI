@@ -280,6 +280,11 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     models_str = ", ".join(models) if models else "N/A"
     targets_str = ", ".join(targets) if targets else "N/A"
 
+    # Get threshold objective settings
+    threshold_objective = getattr(config_handler, "threshold_objective", "youden")
+    vme_cost = getattr(config_handler, "vme_cost", 1.0)
+    me_cost = getattr(config_handler, "me_cost", 1.0)
+
     # Build imputation details
     if imputation_method == "none":
         imputation_details = "Disabled"
@@ -294,7 +299,11 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
 
     # Threshold calibration details
     if calibrate_threshold:
-        threshold_details = f"Enabled ({threshold_method.upper()})"
+        threshold_details = (
+            f"Enabled ({threshold_method.upper()}, objective: {threshold_objective})"
+        )
+        if threshold_objective == "cost_sensitive":
+            threshold_details += f" [VME cost: {vme_cost}, ME cost: {me_cost}]"
     else:
         threshold_details = "Disabled"
 
@@ -352,6 +361,8 @@ def _generate_results_section(
                 <td class="metric-value">{fmt_val("F1_weighted_mean", "F1_weighted_ci_lower", "F1_weighted_ci_upper")}</td>
                 <td class="metric-value">{fmt_val("MCC_mean", "MCC_ci_lower", "MCC_ci_upper")}</td>
                 <td class="metric-value">{fmt_val("Balanced_Acc_mean", "Balanced_Acc_ci_lower", "Balanced_Acc_ci_upper")}</td>
+                <td class="metric-value">{fmt_val("VME_mean", "VME_ci_lower", "VME_ci_upper")}</td>
+                <td class="metric-value">{fmt_val("ME_mean", "ME_ci_lower", "ME_ci_upper")}</td>
             </tr>
             """
             table_rows.append(row)
@@ -366,6 +377,8 @@ def _generate_results_section(
                         <th>F1 (weighted) [95% CI]</th>
                         <th>MCC [95% CI]</th>
                         <th>Balanced Acc [95% CI]</th>
+                        <th>VME [95% CI]</th>
+                        <th>ME [95% CI]</th>
                     </tr>
                 </thead>
                 <tbody>
