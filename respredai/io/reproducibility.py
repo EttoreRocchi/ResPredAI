@@ -70,7 +70,7 @@ def create_reproducibility_manifest(config_handler, datasetter) -> dict:
             "path": str(config_handler.data_path),
             "sha256": hash_file(Path(config_handler.data_path)),
             "shape": list(datasetter.data.shape),
-            "features": datasetter.feature_columns,
+            "features": list(datasetter.X.columns),
             "targets": config_handler.targets,
             "class_distribution": {
                 t: datasetter.data[t].value_counts().to_dict() for t in config_handler.targets

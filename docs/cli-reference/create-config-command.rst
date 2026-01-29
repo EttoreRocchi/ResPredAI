@@ -174,7 +174,23 @@ Use ``respredai list-models`` to see all available models.
   - Score ranges from 0 (confident, at probability extremes) to 1 (uncertain, at threshold)
   - When threshold is calibrated, uncertainty is computed relative to the calibrated threshold
 
-6. Adjust Resources
+6. Configure Preprocessing (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    [Preprocessing]
+    ohe_min_frequency = 0.05
+
+- **ohe_min_frequency**: Minimum frequency for categorical values in OneHotEncoder
+
+  - Categories appearing below this threshold are grouped into an "infrequent" category
+  - Values in (0, 1): proportion of samples (e.g., 0.05 = at least 5% of samples)
+  - Values >= 1: absolute count (e.g., 10 = at least 10 occurrences)
+  - Omit or comment out to disable (keep all categories)
+  - Useful for reducing noise from rare categorical values and preventing overfitting
+
+7. Adjust Resources
 ~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -186,7 +202,7 @@ Use ``respredai list-models`` to see all available models.
 - ``1``: No parallelization (useful for debugging)
 - ``N``: Use N cores
 
-7. Configure Model Saving
+8. Configure Model Saving
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -198,7 +214,7 @@ Use ``respredai list-models`` to see all available models.
 - **enable**: Set to ``true`` to save models every folds
 - **compression**: 0-9 (0=no compression, 3=balanced, 9=maximum)
 
-8. Set Output Location
+9. Set Output Location
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini

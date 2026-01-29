@@ -313,3 +313,85 @@ class TestThresholdObjectiveConfig:
 
         with pytest.raises(ValueError, match="Uncertainty margin must be"):
             ConfigHandler(str(config_path))
+
+
+class TestPreprocessingConfig:
+    """Unit tests for preprocessing configuration."""
+
+    def _make_base_config(self, extra_sections=""):
+        """Create a base config string."""
+        return dedent(f"""
+        [Data]
+        data_path = foo.csv
+        targets = y
+        continuous_features = age
+
+        [Pipeline]
+        models = lr
+        outer_folds = 3
+        inner_folds = 2
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = out
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        {extra_sections}
+        """).strip()
+
+    def test_ohe_min_frequency_default_none(self, tmp_path):
+        """Test that ohe_min_frequency defaults to None when not specified."""
+        config_text = self._make_base_config()
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.ohe_min_frequency is None
+
+    def test_ohe_min_frequency_proportion(self, tmp_path):
+        """Test that ohe_min_frequency is correctly parsed as a proportion."""
+        config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency = 0.05")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.ohe_min_frequency == 0.05
+
+    def test_ohe_min_frequency_absolute_count(self, tmp_path):
+        """Test that ohe_min_frequency >= 1 is converted to int."""
+        config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency = 10")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.ohe_min_frequency == 10
+        assert isinstance(config.ohe_min_frequency, int)
+
+    def test_ohe_min_frequency_invalid_zero(self, tmp_path):
+        """Test that ohe_min_frequency = 0 raises ValueError."""
+        config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency = 0")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="ohe_min_frequency must be positive"):
+            ConfigHandler(str(config_path))
+
+    def test_ohe_min_frequency_invalid_negative(self, tmp_path):
+        """Test that negative ohe_min_frequency raises ValueError."""
+        config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency = -0.1")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="ohe_min_frequency must be positive"):
+            ConfigHandler(str(config_path))

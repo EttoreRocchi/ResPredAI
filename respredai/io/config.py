@@ -37,6 +37,7 @@ class ConfigHandler:
     imputation_strategy: str
     imputation_n_neighbors: int
     imputation_estimator: str
+    ohe_min_frequency: Optional[float]
     logger: Optional[logging.Logger]
 
     def __init__(self, config_path: str) -> None:
@@ -162,6 +163,23 @@ class ConfigHandler:
                 f"Imputation estimator must be one of {valid_estimators}, "
                 f"got '{self.imputation_estimator}'"
             )
+
+        # Preprocessing
+        ohe_min_freq_str = config.get("Preprocessing", "ohe_min_frequency", fallback=None)
+        if ohe_min_freq_str is not None:
+            self.ohe_min_frequency = config.getfloat("Preprocessing", "ohe_min_frequency")
+            # Validate min_frequency (must be in range (0, 1) or an integer >= 1)
+            if self.ohe_min_frequency <= 0:
+                raise ValueError(
+                    f"ohe_min_frequency must be positive, got {self.ohe_min_frequency}"
+                )
+            if 0 < self.ohe_min_frequency < 1:
+                pass  # Valid: proportion of samples
+            elif self.ohe_min_frequency >= 1:
+                # Convert to int for absolute count
+                self.ohe_min_frequency = int(self.ohe_min_frequency)
+        else:
+            self.ohe_min_frequency = None
 
     @staticmethod
     def _setup_logger(log_file: str) -> logging.Logger:

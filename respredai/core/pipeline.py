@@ -53,11 +53,21 @@ def perform_pipeline(
     categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
     # One-hot encoding of categorical features
+    ohe_kwargs = {
+        "drop": "if_binary",
+        "sparse_output": False,
+        "handle_unknown": "infrequent_if_exist"
+        if config_handler.ohe_min_frequency is not None
+        else "ignore",
+    }
+    if config_handler.ohe_min_frequency is not None:
+        ohe_kwargs["min_frequency"] = config_handler.ohe_min_frequency
+
     ohe_transformer = ColumnTransformer(
         transformers=[
             (
                 "ohe",
-                OneHotEncoder(drop=None, sparse_output=False, handle_unknown="ignore"),
+                OneHotEncoder(**ohe_kwargs),
                 categorical_cols,
             )
         ],
@@ -619,11 +629,21 @@ def perform_training(
     categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
     # One-hot encoding of categorical features using ColumnTransformer
+    ohe_kwargs = {
+        "drop": "if_binary",
+        "sparse_output": False,
+        "handle_unknown": "infrequent_if_exist"
+        if config_handler.ohe_min_frequency is not None
+        else "ignore",
+    }
+    if config_handler.ohe_min_frequency is not None:
+        ohe_kwargs["min_frequency"] = config_handler.ohe_min_frequency
+
     ohe_transformer = ColumnTransformer(
         transformers=[
             (
                 "ohe",
-                OneHotEncoder(drop=None, sparse_output=False, handle_unknown="ignore"),
+                OneHotEncoder(**ohe_kwargs),
                 categorical_cols,
             )
         ],
@@ -861,7 +881,8 @@ def perform_evaluation(
     # One-hot encode categorical features (same as training)
     categorical_features = metadata["categorical_features"]
     if categorical_features:
-        # Use drop_first=False to match OneHotEncoder(drop=None) used in training
+        # Use drop_first=False - binary features will be handled via column alignment
+        # since training uses OneHotEncoder(drop="if_binary")
         X_new = pd.get_dummies(X_new, columns=categorical_features, drop_first=False)
 
     # Clean feature names for XGBoost compatibility (same as training)

@@ -2,6 +2,16 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.5.1] - 2026-01-29
+
+### Added
+- **OneHotEncoder `min_frequency` parameter** to reduce noise from rare categorical values
+
+### Changed
+- **Updated `requirements.txt`** with explicit version constraints for all dependencies
+  - `scikit-learn>=1.5.0` required for `TunedThresholdClassifierCV`
+
+
 ## [1.5.0] - 2026-01-20
 
 ### Added

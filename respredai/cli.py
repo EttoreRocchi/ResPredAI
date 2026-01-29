@@ -793,6 +793,9 @@ log_basename = respredai.log
 [Resources]
 n_jobs = -1
 
+[Preprocessing]
+ohe_min_frequency = 0.05
+
 [Output]
 out_folder = ./output/
 
