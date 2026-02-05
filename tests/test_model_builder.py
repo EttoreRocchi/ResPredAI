@@ -6,7 +6,7 @@ import pytest
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 
-from respredai.core.pipe import get_imputer, get_pipeline
+from respredai.core.model_builder import get_imputer, get_pipeline
 
 
 class TestGetImputer:

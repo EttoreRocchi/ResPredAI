@@ -1,4 +1,4 @@
-"""Main pipeline execution for ResPredAI."""
+"""Main ML workflow execution for ResPredAI."""
 
 import json
 import warnings
@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import confusion_matrix, make_scorer, roc_curve
 from sklearn.model_selection import (
@@ -19,9 +20,10 @@ from sklearn.model_selection import (
 )
 from sklearn.preprocessing import OneHotEncoder
 
+from respredai.core.cv_utils import get_outer_cv
 from respredai.core.metrics import metric_dict, save_metrics_summary
+from respredai.core.model_builder import get_pipeline
 from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
-from respredai.core.pipe import get_pipeline
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.confusion_matrix import save_cm
 from respredai.visualization.html_report import generate_html_report
@@ -88,9 +90,12 @@ def perform_pipeline(
             f"Training on {len(models)} models: {models}."
         )
 
+    # Calculate total iterations (folds * repeats)
+    total_outer_iterations = config_handler.outer_folds * config_handler.outer_cv_repeats
+
     # Start overall progress
     if progress_callback:
-        total_work = len(models) * len(Y.columns) * config_handler.outer_folds
+        total_work = len(models) * len(Y.columns) * total_outer_iterations
         progress_callback.start(total_work=total_work)
 
     for model in models:
@@ -99,7 +104,7 @@ def perform_pipeline(
 
         # Start model progress
         if progress_callback:
-            total_work_for_model = len(Y.columns) * config_handler.outer_folds
+            total_work_for_model = len(Y.columns) * total_outer_iterations
             progress_callback.start_model(model, total_work=total_work_for_model)
 
         # Initialize pipeline
@@ -121,19 +126,17 @@ def perform_pipeline(
                 config_handler.logger.error(f"Failed to initialize model {model}: {str(e)}")
             warnings.warn(f"Skipping model {model} due to initialization error: {str(e)}")
             if progress_callback:
-                total_work_skipped = len(Y.columns) * config_handler.outer_folds
+                total_work_skipped = len(Y.columns) * total_outer_iterations
                 progress_callback.skip_model(model, total_work_skipped, "initialization error")
             continue
 
-        # Use StratifiedGroupKFold if groups are specified, otherwise StratifiedKFold
-        if datasetter.groups is not None:
-            outer_cv = StratifiedGroupKFold(
-                n_splits=config_handler.outer_folds, shuffle=True, random_state=config_handler.seed
-            )
-        else:
-            outer_cv = StratifiedKFold(
-                n_splits=config_handler.outer_folds, shuffle=True, random_state=config_handler.seed
-            )
+        # Get outer CV splitter (supports repeated CV and groups)
+        outer_cv = get_outer_cv(
+            n_splits=config_handler.outer_folds,
+            n_repeats=config_handler.outer_cv_repeats,
+            use_groups=(datasetter.groups is not None),
+            random_state=config_handler.seed,
+        )
 
         f1scores, mccs, cms, aurocs = {}, {}, {}, {}
         all_metrics = {}  # Store comprehensive metrics
@@ -141,6 +144,9 @@ def perform_pipeline(
         all_y_true = {}
         all_y_pred = {}
         all_y_prob = {}
+        # Per-fold data for reliability curves (lists of arrays, one per fold)
+        fold_y_true_calib = {}
+        fold_y_prob_calib = {}
 
         for target in Y.columns:
             # Check for existing saved models
@@ -178,6 +184,10 @@ def perform_pipeline(
                         all_y_true[target] = model_data["metrics"].get("all_y_true", [])
                         all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
+
+                        # Initialize empty calibration data (per-fold data not saved)
+                        fold_y_true_calib[target] = []
+                        fold_y_prob_calib[target] = []
 
                         if progress_callback:
                             progress_callback.skip_target(
@@ -222,6 +232,9 @@ def perform_pipeline(
                 all_y_true[target] = []
                 all_y_pred[target] = []
                 all_y_prob[target] = []
+                # Per-fold data for reliability curves
+                fold_y_true_calib[target] = []
+                fold_y_prob_calib[target] = []
 
             y = Y[target]
             if config_handler.verbosity:
@@ -273,6 +286,43 @@ def perform_pipeline(
                     # Step 2: Get best estimator and hyperparameters from GridSearchCV
                     best_estimator = grid.best_estimator_
                     best_params = grid.best_params_
+
+                    # Step 2.5: Post-hoc probability calibration (if enabled)
+                    # This is AFTER model selection but BEFORE threshold tuning
+                    if config_handler.calibrate_probabilities:
+                        # Create CV splitter for probability calibration
+                        if datasetter.groups is not None:
+                            prob_calib_cv = StratifiedGroupKFold(
+                                n_splits=config_handler.probability_calibration_cv,
+                                shuffle=True,
+                                random_state=config_handler.seed,
+                            )
+                            # Convert to list of splits for CalibratedClassifierCV
+                            prob_calib_splits = list(
+                                prob_calib_cv.split(
+                                    X_train_scaled, y_train, datasetter.groups[train_set]
+                                )
+                            )
+                        else:
+                            prob_calib_splits = config_handler.probability_calibration_cv
+
+                        # Wrap the best estimator with CalibratedClassifierCV
+                        calibrated_classifier = CalibratedClassifierCV(
+                            estimator=best_estimator,
+                            method=config_handler.probability_calibration_method,
+                            cv=prob_calib_splits,
+                            n_jobs=1,  # Avoid nested parallelism
+                        )
+
+                        # Fit on training data (re-fits the estimator internally)
+                        calibrated_classifier.fit(X_train_scaled, y_train)
+                        best_estimator = calibrated_classifier
+
+                        if config_handler.verbosity == 2:
+                            config_handler.logger.info(
+                                f"Probability calibration applied "
+                                f"(method={config_handler.probability_calibration_method})."
+                            )
 
                     # Step 3: Threshold calibration using Youden's J statistic (if enabled)
                     if config_handler.calibrate_threshold:
@@ -397,6 +447,10 @@ def perform_pipeline(
                     all_y_pred[target].extend(y_pred)
                     all_y_prob[target].extend(y_prob)
 
+                    # Store per-fold data for reliability curves (as separate arrays)
+                    fold_y_true_calib[target].append(y_test.values)
+                    fold_y_prob_calib[target].append(y_prob[:, 1])
+
                     # Store individual metrics for backwards compatibility
                     f1scores[target].append(fold_metrics["F1 (weighted)"])
                     mccs[target].append(fold_metrics["MCC"])
@@ -440,6 +494,9 @@ def perform_pipeline(
                         "AUROC": np.nan,
                         "VME": np.nan,
                         "ME": np.nan,
+                        "Brier Score": np.nan,
+                        "ECE": np.nan,
+                        "MCE": np.nan,
                     }
                     all_metrics[target].append(nan_metrics)
                     f1scores[target].append(np.nan)
@@ -544,6 +601,26 @@ def perform_pipeline(
                 y_pred_all=np.array(all_y_pred[target]),
                 y_prob_all=np.array(all_y_prob[target]),
             )
+
+            # Generate reliability curves for this model-target combination
+            # Skip if no per-fold data available (e.g., loaded from saved models)
+            if fold_y_true_calib[target] and fold_y_prob_calib[target]:
+                from respredai.visualization.reliability_curves import save_reliability_curves
+
+                calibration_dir = Path(config_handler.out_folder) / "calibration"
+                n_total_folds = len(fold_y_true_calib[target])
+                save_reliability_curves(
+                    y_true_list=fold_y_true_calib[target],
+                    y_prob_list=fold_y_prob_calib[target],
+                    fold_labels=[f"Fold {i + 1}" for i in range(n_total_folds)],
+                    out_dir=calibration_dir,
+                    model=model_safe_name,
+                    target=target_safe_name,
+                )
+                if config_handler.verbosity:
+                    config_handler.logger.info(
+                        f"Generated reliability curves for {model} - {target}"
+                    )
 
             if config_handler.verbosity:
                 config_handler.logger.info(

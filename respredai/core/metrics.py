@@ -15,6 +15,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+from respredai.core.calibration import (
+    CALIBRATION_METRIC_FUNCTIONS,
+    calibration_metrics_dict,
+)
+
 
 def youden_j_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
@@ -162,7 +167,7 @@ def get_threshold_scorer(
 
 def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
     """
-    Calculate comprehensive classification metrics.
+    Calculate comprehensive classification metrics including calibration diagnostics.
 
     Parameters
     ----------
@@ -176,9 +181,10 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
     Returns
     -------
     dict
-        Dictionary with all metrics
+        Dictionary with all metrics including Brier Score, ECE, and MCE
     """
-    return {
+    # Base classification metrics
+    metrics = {
         "Precision (0)": precision_score(y_true, y_pred, pos_label=0, zero_division=0),
         "Precision (1)": precision_score(y_true, y_pred, pos_label=1, zero_division=0),
         "Recall (0)": recall_score(y_true, y_pred, pos_label=0, zero_division=0),
@@ -192,6 +198,12 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
         "VME": 1 - recall_score(y_true, y_pred, pos_label=1, zero_division=0),
         "ME": 1 - recall_score(y_true, y_pred, pos_label=0, zero_division=0),
     }
+
+    # Add calibration diagnostics (always computed, independent of calibration settings)
+    calibration_metrics = calibration_metrics_dict(y_true, y_prob[:, 1])
+    metrics.update(calibration_metrics)
+
+    return metrics
 
 
 # Metric wrapper functions for sample-level bootstrapping
@@ -262,6 +274,9 @@ METRIC_FUNCTIONS = {
     "VME": _vme_metric,
     "ME": _me_metric,
 }
+
+# Add calibration metric wrappers for bootstrap CI calculation
+METRIC_FUNCTIONS.update(CALIBRATION_METRIC_FUNCTIONS)
 
 
 def bootstrap_ci_samples(

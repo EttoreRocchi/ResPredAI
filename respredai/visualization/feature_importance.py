@@ -9,33 +9,65 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import TunedThresholdClassifierCV
+
+
+def unwrap_calibrated_model(model):
+    """
+    Recursively extract underlying estimator from calibration wrappers.
+
+    Handles nested wrappers when both calibration types are enabled:
+    - TunedThresholdClassifierCV (threshold calibration with cv method)
+    - CalibratedClassifierCV (probability calibration)
+
+    Returns the innermost model with coef_/feature_importances_.
+    """
+    # Unwrap TunedThresholdClassifierCV
+    if isinstance(model, TunedThresholdClassifierCV):
+        if hasattr(model, "estimator_"):
+            return unwrap_calibrated_model(model.estimator_)
+
+    # Unwrap CalibratedClassifierCV
+    if isinstance(model, CalibratedClassifierCV):
+        if hasattr(model, "calibrated_classifiers_") and model.calibrated_classifiers_:
+            return unwrap_calibrated_model(model.calibrated_classifiers_[0].estimator)
+
+    return model
 
 
 def has_feature_importance(model) -> bool:
     """
     Check if a model has native feature importance or coefficients.
 
+    Unwraps calibration wrappers (CalibratedClassifierCV, TunedThresholdClassifierCV)
+    to check the underlying model.
+
     Parameters
     ----------
     model : sklearn estimator
-        The trained model.
+        The trained model (possibly wrapped).
 
     Returns
     -------
     bool
-        True if model has `feature_importances_` or `coef_` attribute.
+        True if underlying model has `feature_importances_` or `coef_` attribute.
     """
-    return hasattr(model, "feature_importances_") or hasattr(model, "coef_")
+    inner_model = unwrap_calibrated_model(model)
+    return hasattr(inner_model, "feature_importances_") or hasattr(inner_model, "coef_")
 
 
 def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Series]:
     """
     Extract native feature importance or coefficients from a model.
 
+    Unwraps calibration wrappers (CalibratedClassifierCV, TunedThresholdClassifierCV)
+    to access the underlying model's coefficients/importances.
+
     Parameters
     ----------
     model : sklearn estimator
-        The trained model.
+        The trained model (possibly wrapped).
     feature_names : list
         List of feature names.
 
@@ -48,10 +80,12 @@ def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Serie
     if model is None:
         return None
 
-    if hasattr(model, "feature_importances_"):
-        importances = model.feature_importances_
-    elif hasattr(model, "coef_"):
-        coef = model.coef_
+    inner_model = unwrap_calibrated_model(model)
+
+    if hasattr(inner_model, "feature_importances_"):
+        importances = inner_model.feature_importances_
+    elif hasattr(inner_model, "coef_"):
+        coef = inner_model.coef_
         if len(coef.shape) > 1:
             coef = coef[0]
         importances = coef
@@ -166,13 +200,15 @@ def extract_feature_importance_from_models(
 
     # Try native feature importance first
     if has_feature_importance(first_model):
-        if hasattr(first_model, "feature_names_in_"):
-            feature_names = first_model.feature_names_in_.tolist()
+        # Unwrap to get feature names from the underlying model
+        inner_model = unwrap_calibrated_model(first_model)
+        if hasattr(inner_model, "feature_names_in_"):
+            feature_names = inner_model.feature_names_in_.tolist()
         else:
             n_features = (
-                first_model.coef_.shape[1]
-                if hasattr(first_model, "coef_")
-                else len(first_model.feature_importances_)
+                inner_model.coef_.shape[1]
+                if hasattr(inner_model, "coef_")
+                else len(inner_model.feature_importances_)
             )
             feature_names = [f"feature_{i}" for i in range(n_features)]
 
@@ -205,9 +241,10 @@ def extract_feature_importance_from_models(
                 continue
 
             X_test, _ = test_data
-            # Get feature names from model (more reliable than stored names)
-            if hasattr(model, "feature_names_in_"):
-                feat_names = list(model.feature_names_in_)
+            # Get feature names from model (unwrap if needed)
+            inner_model = unwrap_calibrated_model(model)
+            if hasattr(inner_model, "feature_names_in_"):
+                feat_names = list(inner_model.feature_names_in_)
             else:
                 feat_names = [f"feature_{i}" for i in range(X_test.shape[1])]
 

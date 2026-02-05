@@ -395,3 +395,192 @@ class TestPreprocessingConfig:
 
         with pytest.raises(ValueError, match="ohe_min_frequency must be positive"):
             ConfigHandler(str(config_path))
+
+
+class TestProbabilityCalibrationConfig:
+    """Unit tests for probability calibration configuration."""
+
+    def _make_base_config(self, extra_pipeline=""):
+        """Create a base config string."""
+        return dedent(f"""
+        [Data]
+        data_path = foo.csv
+        targets = y
+        continuous_features = age
+
+        [Pipeline]
+        models = lr
+        outer_folds = 3
+        inner_folds = 2
+        {extra_pipeline}
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = out
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        """).strip()
+
+    def test_default_calibration_disabled(self, tmp_path):
+        """Test that probability calibration defaults to disabled."""
+        config_text = self._make_base_config()
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.calibrate_probabilities is False
+
+    def test_calibration_enabled(self, tmp_path):
+        """Test that probability calibration can be enabled."""
+        config_text = self._make_base_config("calibrate_probabilities = true")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.calibrate_probabilities is True
+
+    @pytest.mark.parametrize("method", ["sigmoid", "isotonic"])
+    def test_valid_calibration_methods(self, tmp_path, method):
+        """Test that both sigmoid and isotonic methods are valid."""
+        config_text = self._make_base_config(
+            f"calibrate_probabilities = true\n        probability_calibration_method = {method}"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.probability_calibration_method == method
+
+    def test_invalid_calibration_method_raises(self, tmp_path):
+        """Test that invalid calibration method raises ValueError."""
+        config_text = self._make_base_config(
+            "calibrate_probabilities = true\n        probability_calibration_method = invalid"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="Probability calibration method must be"):
+            ConfigHandler(str(config_path))
+
+    def test_default_calibration_method(self, tmp_path):
+        """Test that calibration method defaults to sigmoid."""
+        config_text = self._make_base_config("calibrate_probabilities = true")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.probability_calibration_method == "sigmoid"
+
+    def test_default_calibration_cv(self, tmp_path):
+        """Test that calibration CV folds defaults to 5."""
+        config_text = self._make_base_config("calibrate_probabilities = true")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.probability_calibration_cv == 5
+
+    def test_custom_calibration_cv(self, tmp_path):
+        """Test that custom CV folds can be set."""
+        config_text = self._make_base_config(
+            "calibrate_probabilities = true\n        probability_calibration_cv = 3"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.probability_calibration_cv == 3
+
+    def test_invalid_calibration_cv_raises(self, tmp_path):
+        """Test that CV folds < 2 raises ValueError."""
+        config_text = self._make_base_config(
+            "calibrate_probabilities = true\n        probability_calibration_cv = 1"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="probability_calibration_cv must be >= 2"):
+            ConfigHandler(str(config_path))
+
+
+class TestRepeatedCVConfig:
+    """Unit tests for repeated cross-validation configuration."""
+
+    def _make_base_config(self, extra_pipeline=""):
+        """Create a base config string."""
+        return dedent(f"""
+        [Data]
+        data_path = foo.csv
+        targets = y
+        continuous_features = age
+
+        [Pipeline]
+        models = lr
+        outer_folds = 3
+        inner_folds = 2
+        {extra_pipeline}
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = out
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        """).strip()
+
+    def test_default_repeats_one(self, tmp_path):
+        """Test that outer_cv_repeats defaults to 1."""
+        config_text = self._make_base_config()
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.outer_cv_repeats == 1
+
+    def test_custom_repeats(self, tmp_path):
+        """Test that custom repeats can be set."""
+        config_text = self._make_base_config("outer_cv_repeats = 5")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.outer_cv_repeats == 5
+
+    def test_invalid_repeats_zero_raises(self, tmp_path):
+        """Test that outer_cv_repeats = 0 raises ValueError."""
+        config_text = self._make_base_config("outer_cv_repeats = 0")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="outer_cv_repeats must be >= 1"):
+            ConfigHandler(str(config_path))
+
+    def test_invalid_repeats_negative_raises(self, tmp_path):
+        """Test that negative outer_cv_repeats raises ValueError."""
+        config_text = self._make_base_config("outer_cv_repeats = -1")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="outer_cv_repeats must be >= 1"):
+            ConfigHandler(str(config_path))

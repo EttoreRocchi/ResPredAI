@@ -1,10 +1,10 @@
 """Core ML pipeline functionality."""
 
 from respredai.core.metrics import metric_dict, save_metrics_summary, youden_j_score
+from respredai.core.model_builder import get_pipeline
 from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
 from respredai.core.params import PARAM_GRID
-from respredai.core.pipe import get_pipeline
-from respredai.core.pipeline import perform_evaluation, perform_pipeline, perform_training
+from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
 
 __all__ = [
     "perform_pipeline",

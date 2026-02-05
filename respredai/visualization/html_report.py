@@ -226,6 +226,7 @@ def _generate_toc(targets: List[str]) -> str:
         [
             "</ul></li>",
             '<li><a href="#confusion-matrices">4. Confusion Matrices</a></li>',
+            '<li><a href="#calibration-diagnostics">5. Calibration Diagnostics</a></li>',
         ]
     )
 
@@ -268,6 +269,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     """Generate framework summary section with configuration table."""
     outer_folds = getattr(config_handler, "outer_folds", "N/A")
     inner_folds = getattr(config_handler, "inner_folds", "N/A")
+    outer_cv_repeats = getattr(config_handler, "outer_cv_repeats", 1)
     models = getattr(config_handler, "models", [])
     targets = getattr(config_handler, "targets", [])
     calibrate_threshold = getattr(config_handler, "calibrate_threshold", False)
@@ -276,6 +278,11 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     imputation_strategy = getattr(config_handler, "imputation_strategy", "mean")
     imputation_n_neighbors = getattr(config_handler, "imputation_n_neighbors", 5)
     imputation_estimator = getattr(config_handler, "imputation_estimator", "bayesian_ridge")
+
+    # Probability calibration settings
+    calibrate_probabilities = getattr(config_handler, "calibrate_probabilities", False)
+    prob_calibration_method = getattr(config_handler, "probability_calibration_method", "sigmoid")
+    prob_calibration_cv = getattr(config_handler, "probability_calibration_cv", 5)
 
     models_str = ", ".join(models) if models else "N/A"
     targets_str = ", ".join(targets) if targets else "N/A"
@@ -307,6 +314,18 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     else:
         threshold_details = "Disabled"
 
+    # Probability calibration details
+    if calibrate_probabilities:
+        prob_calib_details = f"Enabled ({prob_calibration_method}, {prob_calibration_cv}-fold CV)"
+    else:
+        prob_calib_details = "Disabled"
+
+    # Outer CV details (include repeats if > 1)
+    if outer_cv_repeats > 1:
+        outer_cv_details = f"{outer_folds} folds x {outer_cv_repeats} repeats = {outer_folds * outer_cv_repeats} iterations"
+    else:
+        outer_cv_details = str(outer_folds)
+
     return f"""
     <section id="framework-summary">
         <h2>2. Framework Summary</h2>
@@ -314,8 +333,9 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><th>Setting</th><th>Value</th></tr>
             <tr><td>Targets</td><td>{targets_str}</td></tr>
             <tr><td>Models</td><td>{models_str}</td></tr>
-            <tr><td>Outer CV Folds</td><td>{outer_folds}</td></tr>
+            <tr><td>Outer CV Folds</td><td>{outer_cv_details}</td></tr>
             <tr><td>Inner CV Folds</td><td>{inner_folds}</td></tr>
+            <tr><td>Probability Calibration</td><td>{prob_calib_details}</td></tr>
             <tr><td>Threshold Calibration</td><td>{threshold_details}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{imputation_details}</td></tr>
             <tr><td>Confidence Intervals</td><td>95% (1,000 bootstrap samples)</td></tr>
@@ -436,6 +456,101 @@ def _generate_confusion_matrices_section(
     return "\n".join(sections)
 
 
+def _generate_calibration_section(
+    output_path: Path, metrics_data: Dict, models: List[str], targets: List[str]
+) -> str:
+    """Generate calibration diagnostics section with metrics and reliability curves."""
+    sections = [
+        '<section id="calibration-diagnostics">',
+        "<h2>5. Calibration Diagnostics</h2>",
+        "<p>Calibration metrics measure how well the predicted probabilities "
+        "match the observed frequencies. Lower Brier Score, ECE, and MCE indicate "
+        "better calibration.</p>",
+    ]
+
+    calibration_dir = output_path / "calibration"
+
+    for model in models:
+        model_safe = model.replace(" ", "_")
+        sections.append(f"<h3>{model}</h3>")
+
+        # Build calibration metrics table
+        table_rows = []
+        for target in targets:
+            key = f"{model}_{target}"
+            if key not in metrics_data:
+                continue
+
+            data = metrics_data[key]
+
+            def fmt_calib(metric_base):
+                mean = data.get(f"{metric_base}_mean", np.nan)
+                ci_lower = data.get(f"{metric_base}_ci_lower", np.nan)
+                ci_upper = data.get(f"{metric_base}_ci_upper", np.nan)
+                if np.isnan(mean):
+                    return "N/A"
+                ci_str = ""
+                if not np.isnan(ci_lower) and not np.isnan(ci_upper):
+                    ci_str = f' <span class="ci-bracket">[{ci_lower:.4f}-{ci_upper:.4f}]</span>'
+                return f"{mean:.4f}{ci_str}"
+
+            row = f"""
+            <tr>
+                <td>{target}</td>
+                <td class="metric-value">{fmt_calib("Brier_Score")}</td>
+                <td class="metric-value">{fmt_calib("ECE")}</td>
+                <td class="metric-value">{fmt_calib("MCE")}</td>
+            </tr>
+            """
+            table_rows.append(row)
+
+        if table_rows:
+            sections.append("""
+            <table>
+                <thead>
+                    <tr>
+                        <th>Target</th>
+                        <th>Brier Score [95% CI]</th>
+                        <th>ECE [95% CI]</th>
+                        <th>MCE [95% CI]</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """)
+            sections.append("".join(table_rows))
+            sections.append("</tbody></table>")
+
+        # Reliability curves
+        sections.append("<h4>Reliability Curves</h4>")
+        sections.append('<div class="cm-grid">')
+
+        found_curves = False
+        for target in targets:
+            target_safe = target.replace(" ", "_")
+            curve_path = calibration_dir / f"reliability_curve_{model_safe}_{target_safe}.png"
+
+            if curve_path.exists():
+                found_curves = True
+                with open(curve_path, "rb") as f:
+                    img_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+                sections.append(f"""
+                <div class="cm-item">
+                    <img src="data:image/png;base64,{img_base64}"
+                         alt="Reliability Curve - {model} - {target}">
+                    <p class="figure-caption">{target}</p>
+                </div>
+                """)
+
+        if not found_curves:
+            sections.append("<p>No reliability curves available.</p>")
+
+        sections.append("</div>")  # Close cm-grid
+
+    sections.append("</section>")
+    return "\n".join(sections)
+
+
 def _generate_footer() -> str:
     """Generate report footer."""
     return f"""
@@ -531,6 +646,7 @@ def generate_html_report(
         _generate_framework_summary_section(config_handler),
         _generate_results_section(metrics_data, models, targets, output_path),
         _generate_confusion_matrices_section(output_path, models, targets),
+        _generate_calibration_section(output_path, metrics_data, models, targets),
         _generate_footer(),
         "</body>",
         "</html>",

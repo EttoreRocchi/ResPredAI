@@ -17,7 +17,7 @@ from rich.progress import (
 from rich.table import Table
 
 from respredai import __version__
-from respredai.core.pipeline import perform_evaluation, perform_pipeline, perform_training
+from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.feature_importance import process_feature_importance
 
@@ -780,8 +780,16 @@ continuous_features = Feature1,Feature2,Feature3
 models = LR,RF,XGB
 outer_folds = 5
 inner_folds = 3
+# Number of repetitions for outer CV (1 = standard CV, >1 = repeated CV)
+outer_cv_repeats = 1
 calibrate_threshold = false
 threshold_method = auto
+# Post-hoc probability calibration using CalibratedClassifierCV
+calibrate_probabilities = false
+# Calibration method: sigmoid (Platt scaling) or isotonic
+probability_calibration_method = sigmoid
+# CV folds for probability calibration (must be >= 2)
+probability_calibration_cv = 5
 
 [Reproducibility]
 seed = 42

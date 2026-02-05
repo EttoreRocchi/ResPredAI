@@ -38,6 +38,10 @@ class ConfigHandler:
     imputation_n_neighbors: int
     imputation_estimator: str
     ohe_min_frequency: Optional[float]
+    calibrate_probabilities: bool
+    probability_calibration_method: str
+    probability_calibration_cv: int
+    outer_cv_repeats: int
     logger: Optional[logging.Logger]
 
     def __init__(self, config_path: str) -> None:
@@ -81,6 +85,18 @@ class ConfigHandler:
         ).lower()
         self.vme_cost = config.getfloat("Pipeline", "vme_cost", fallback=1.0)
         self.me_cost = config.getfloat("Pipeline", "me_cost", fallback=1.0)
+        self.outer_cv_repeats = config.getint("Pipeline", "outer_cv_repeats", fallback=1)
+
+        # Section: Probability calibration
+        self.calibrate_probabilities = config.getboolean(
+            "Pipeline", "calibrate_probabilities", fallback=False
+        )
+        self.probability_calibration_method = config.get(
+            "Pipeline", "probability_calibration_method", fallback="sigmoid"
+        ).lower()
+        self.probability_calibration_cv = config.getint(
+            "Pipeline", "probability_calibration_cv", fallback=5
+        )
 
         # Section: Uncertainty
         self.uncertainty_margin = config.getfloat("Uncertainty", "margin", fallback=0.1)
@@ -126,6 +142,22 @@ class ConfigHandler:
             raise ValueError(f"vme_cost must be positive, got {self.vme_cost}")
         if self.me_cost <= 0:
             raise ValueError(f"me_cost must be positive, got {self.me_cost}")
+
+        # Validate probability calibration parameters
+        valid_calibration_methods = ["sigmoid", "isotonic"]
+        if self.probability_calibration_method not in valid_calibration_methods:
+            raise ValueError(
+                f"Probability calibration method must be one of {valid_calibration_methods}, "
+                f"got '{self.probability_calibration_method}'"
+            )
+        if self.probability_calibration_cv < 2:
+            raise ValueError(
+                f"probability_calibration_cv must be >= 2, got {self.probability_calibration_cv}"
+            )
+
+        # Validate repeated CV
+        if self.outer_cv_repeats < 1:
+            raise ValueError(f"outer_cv_repeats must be >= 1, got {self.outer_cv_repeats}")
 
         # Validate uncertainty margin
         if not 0 < self.uncertainty_margin < 0.5:

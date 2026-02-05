@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from respredai.core.pipeline import perform_evaluation, perform_pipeline, perform_training
+from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
 from respredai.io.config import ConfigHandler, DataSetter
 
 # Suppress expected sklearn warnings for small synthetic test data
@@ -462,3 +462,239 @@ class TestPipelineWithImputation:
         assert (
             Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
         ).exists()
+
+
+class TestPipelineWithProbabilityCalibration:
+    """Integration tests for probability calibration."""
+
+    @pytest.mark.slow
+    def test_pipeline_with_sigmoid_calibration(self, tmp_path):
+        """Test pipeline with sigmoid probability calibration."""
+        df = create_synthetic_data(n_samples=60, seed=42)
+        data_path = tmp_path / "test_data.csv"
+        df.to_csv(data_path, index=False)
+
+        config_text = dedent(f"""
+        [Data]
+        data_path = {data_path}
+        targets = resistant
+        continuous_features = age, bmi
+        group_column = patient_id
+
+        [Pipeline]
+        models = LR
+        outer_folds = 3
+        inner_folds = 2
+        calibrate_probabilities = true
+        probability_calibration_method = sigmoid
+        probability_calibration_cv = 3
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = {tmp_path / "output"}
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        """).strip()
+
+        config_path = tmp_path / "test_config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.calibrate_probabilities is True
+        assert config.probability_calibration_method == "sigmoid"
+
+        datasetter = DataSetter(config)
+
+        perform_pipeline(
+            datasetter=datasetter,
+            models=config.models,
+            config_handler=config,
+        )
+
+        # Verify outputs
+        assert (
+            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        ).exists()
+
+    @pytest.mark.slow
+    def test_pipeline_with_isotonic_calibration(self, tmp_path):
+        """Test pipeline with isotonic probability calibration."""
+        df = create_synthetic_data(n_samples=100, seed=42)  # Need more samples for isotonic
+        data_path = tmp_path / "test_data.csv"
+        df.to_csv(data_path, index=False)
+
+        config_text = dedent(f"""
+        [Data]
+        data_path = {data_path}
+        targets = resistant
+        continuous_features = age, bmi
+        group_column = patient_id
+
+        [Pipeline]
+        models = LR
+        outer_folds = 3
+        inner_folds = 2
+        calibrate_probabilities = true
+        probability_calibration_method = isotonic
+        probability_calibration_cv = 3
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = {tmp_path / "output"}
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        """).strip()
+
+        config_path = tmp_path / "test_config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        datasetter = DataSetter(config)
+
+        perform_pipeline(
+            datasetter=datasetter,
+            models=config.models,
+            config_handler=config,
+        )
+
+        assert (
+            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        ).exists()
+
+
+class TestPipelineWithRepeatedCV:
+    """Integration tests for repeated cross-validation."""
+
+    @pytest.mark.slow
+    def test_pipeline_with_repeated_cv(self, tmp_path):
+        """Test pipeline with n_repeats > 1."""
+        df = create_synthetic_data(n_samples=60, seed=42)
+        data_path = tmp_path / "test_data.csv"
+        df.to_csv(data_path, index=False)
+
+        config_text = dedent(f"""
+        [Data]
+        data_path = {data_path}
+        targets = resistant
+        continuous_features = age, bmi
+        group_column = patient_id
+
+        [Pipeline]
+        models = LR
+        outer_folds = 2
+        inner_folds = 2
+        outer_cv_repeats = 2
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = {tmp_path / "output"}
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        """).strip()
+
+        config_path = tmp_path / "test_config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.outer_cv_repeats == 2
+
+        datasetter = DataSetter(config)
+
+        perform_pipeline(
+            datasetter=datasetter,
+            models=config.models,
+            config_handler=config,
+        )
+
+        # Verify outputs exist
+        assert (
+            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        ).exists()
+
+
+class TestCalibrationDiagnostics:
+    """Integration tests for calibration diagnostics."""
+
+    @pytest.mark.slow
+    def test_calibration_metrics_in_output(self, tmp_path):
+        """Test that calibration metrics appear in output."""
+        df = create_synthetic_data(n_samples=60, seed=42)
+        data_path = tmp_path / "test_data.csv"
+        df.to_csv(data_path, index=False)
+
+        config_path = create_test_config(tmp_path, data_path)
+        config = ConfigHandler(str(config_path))
+        datasetter = DataSetter(config)
+
+        perform_pipeline(
+            datasetter=datasetter,
+            models=config.models,
+            config_handler=config,
+        )
+
+        # Load metrics and check for calibration metrics
+        metrics_path = Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        metrics_df = pd.read_csv(metrics_path)
+
+        metric_names = metrics_df["Metric"].tolist()
+        assert "Brier Score" in metric_names
+        assert "ECE" in metric_names
+        assert "MCE" in metric_names
+
+    @pytest.mark.slow
+    def test_reliability_curves_generated(self, tmp_path):
+        """Test that reliability curves are generated."""
+        df = create_synthetic_data(n_samples=60, seed=42)
+        data_path = tmp_path / "test_data.csv"
+        df.to_csv(data_path, index=False)
+
+        config_path = create_test_config(tmp_path, data_path)
+        config = ConfigHandler(str(config_path))
+        datasetter = DataSetter(config)
+
+        perform_pipeline(
+            datasetter=datasetter,
+            models=config.models,
+            config_handler=config,
+        )
+
+        # Check calibration directory exists with reliability curves
+        calibration_dir = Path(config.out_folder) / "calibration"
+        assert calibration_dir.exists()
+
+        # Check reliability curve file exists
+        reliability_curve = calibration_dir / "reliability_curve_LR_resistant.png"
+        assert reliability_curve.exists()
