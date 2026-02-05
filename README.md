@@ -3,7 +3,7 @@
 ## Antimicrobial resistance predictions via artificial intelligence models
 
 [![PyPI](https://img.shields.io/pypi/v/respredai)](https://pypi.org/project/respredai/)
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 ![CI](https://github.com/EttoreRocchi/ResPredAI/actions/workflows/ci.yaml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -81,6 +81,13 @@ continuous_features = Feature1,Feature2,Feature3
 models = LR,RF,XGB,CatBoost
 outer_folds = 5
 inner_folds = 3
+# Repeated CV: set >1 for more robust estimates
+outer_cv_repeats = 1
+# Probability calibration: post-hoc calibration on best estimator
+calibrate_probabilities = false
+probability_calibration_method = sigmoid  # sigmoid or isotonic
+probability_calibration_cv = 5
+# Threshold calibration
 calibrate_threshold = false
 threshold_method = auto
 # Threshold optimization objective: youden (default), f1, f2, cost_sensitive
@@ -230,7 +237,8 @@ to show the installed version of ResPredAI.
 
 The pipeline generates:
 - **Confusion matrices**: PNG files with heatmaps showing model performance for each target
-- **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC, VME, ME) with mean, std, and 95% CI
+- **Detailed metrics tables**: CSV files with comprehensive metrics (precision, recall, F1, MCC, balanced accuracy, AUROC, VME, ME, Brier Score, ECE, MCE) with mean, std, and 95% CI
+- **Calibration diagnostics**: Reliability curves (calibration plots) per fold and aggregate
 - **Trained models**: Saved models for resumption and feature importance extraction (if model saving enabled)
 - **Feature importance**: Plots and CSV files showing feature importance/coefficients (generated separately)
 - **Log files**: Detailed execution logs (if verbosity > 0)
@@ -245,16 +253,18 @@ output_folder/
 │   └── training_metadata.json
 ├── metrics/                                        # Detailed performance metrics
 │   ├── {target_name}/
-│   │   ├── {model_name}_metrics_detailed.csv
+│   │   ├── {model_name}_metrics_detailed.csv      # Includes Brier Score, ECE, MCE
 │   │   └── summary.csv                            # Summary across all models
 │   └── summary_all.csv                            # Global summary
+├── calibration/                                    # Calibration diagnostics
+│   └── reliability_curve_{model}_{target}.png     # Reliability curves per fold + aggregate
 ├── feature_importance/                             # Feature importance (if extracted)
 │   └── {target_name}/
 │       ├── {model_name}_feature_importance.csv    # Importance values
 │       └── {model_name}_feature_importance.png    # Barplot visualization
 ├── confusion_matrices/                             # Confusion matrix heatmaps
 │   └── Confusion_matrix_{model_name}_{target_name}.png
-├── report.html                                     # Comprehensive HTML report
+├── report.html                                     # Comprehensive HTML report (includes calibration section)
 └── respredai.log                                   # Execution log (if verbosity > 0)
 ```
 

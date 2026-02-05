@@ -2,6 +2,29 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.6.0] - 2026-02-05
+
+### Added
+- **Probability Calibration**:
+  - Optional post-hoc probability calibration on the best estimator per outer CV fold
+  - Supports `sigmoid` (Platt scaling) and `isotonic` calibration methods
+  - Applied after hyper-parameters tuning and before threshold tuning
+
+- **Calibration Diagnostics**:
+  - **Brier Score**: Mean squared error of probability predictions (lower is better)
+  - **ECE (Expected Calibration Error)**: Weighted average of calibration error across bins
+  - **MCE (Maximum Calibration Error)**: Maximum calibration error across any bin
+  - **Reliability curves** (calibration plots) per outer CV fold and aggregate
+
+- **Repeated Stratified Cross-Validation**:
+  - `outer_cv_repeats` config option (default: `1`)
+  - Set `>1` for repeated CV with different shuffles for more robust performance estimates
+
+### Changed
+- `metric_dict()` now includes Brier Score, ECE, and MCE by default
+- HTML report includes new calibration diagnostics section
+- Output folder now includes `calibration/` directory with reliability curve images
+
 ## [1.5.1] - 2026-01-29
 
 ### Added

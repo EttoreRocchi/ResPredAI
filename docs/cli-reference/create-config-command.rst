@@ -42,12 +42,16 @@ The command creates a file with the following structure:
     continuous_features = Feature1,Feature2
 
     [Pipeline]
-    # Available models: LR, MLP, XGB, RF, CatBoost, TabPFN, RBF_SVC, Linear_SVC
+    # Available models: LR, MLP, XGB, RF, CatBoost, TabPFN, RBF_SVC, Linear_SVC, KNN
     models = LR,XGB,RF
     outer_folds = 5
     inner_folds = 3
+    outer_cv_repeats = 1
     calibrate_threshold = false
     threshold_method = auto
+    calibrate_probabilities = false
+    probability_calibration_method = sigmoid
+    probability_calibration_cv = 5
 
     [Reproducibility]
     seed = 42
@@ -148,7 +152,48 @@ Use ``respredai list-models`` to see all available models.
   - ME (Major Error): Predicted resistant when actually susceptible
   - Higher ``vme_cost`` relative to ``me_cost`` will shift threshold to reduce false susceptible predictions
 
-5. Configure Uncertainty Quantification (Optional)
+5. Configure Repeated Cross-Validation (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    outer_cv_repeats = 3
+
+- **outer_cv_repeats**: Number of times to repeat outer cross-validation (default: 1)
+
+  - ``1``: Standard (non-repeated) cross-validation
+  - ``>1``: Repeated CV with different random shuffles for more robust estimates
+  - Total iterations = ``outer_folds`` × ``outer_cv_repeats``
+  - Example: 5 folds × 3 repeats = 15 total train/test iterations
+
+6. Configure Probability Calibration (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    calibrate_probabilities = true
+    probability_calibration_method = sigmoid
+    probability_calibration_cv = 5
+
+- **calibrate_probabilities**: Enable post-hoc probability calibration
+
+  - ``true``: Apply CalibratedClassifierCV to calibrate predicted probabilities
+  - ``false``: Use uncalibrated probabilities (default)
+  - Applied after Applied after hyper-parameters tuning and before threshold tuning
+
+- **probability_calibration_method**: Calibration method
+
+  - ``sigmoid``: Platt scaling - fits logistic regression (default, works well for most cases)
+  - ``isotonic``: Isotonic regression - non-parametric (requires more data)
+
+- **probability_calibration_cv**: CV folds for calibration (default: 5)
+
+  - Internal cross-validation used by CalibratedClassifierCV
+  - Must be at least 2
+
+**Note**: Calibration diagnostics (Brier Score, ECE, MCE, reliability curves) are always computed regardless of this setting.
+
+8. Configure Uncertainty Quantification (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -174,7 +219,7 @@ Use ``respredai list-models`` to see all available models.
   - Score ranges from 0 (confident, at probability extremes) to 1 (uncertain, at threshold)
   - When threshold is calibrated, uncertainty is computed relative to the calibrated threshold
 
-6. Configure Preprocessing (Optional)
+9. Configure Preprocessing (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
@@ -190,8 +235,8 @@ Use ``respredai list-models`` to see all available models.
   - Omit or comment out to disable (keep all categories)
   - Useful for reducing noise from rare categorical values and preventing overfitting
 
-7. Adjust Resources
-~~~~~~~~~~~~~~~~~~~
+10. Adjust Resources
+~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
 
@@ -202,8 +247,8 @@ Use ``respredai list-models`` to see all available models.
 - ``1``: No parallelization (useful for debugging)
 - ``N``: Use N cores
 
-8. Configure Model Saving
-~~~~~~~~~~~~~~~~~~~~~~~~~
+11. Configure Model Saving
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
 
@@ -214,8 +259,8 @@ Use ``respredai list-models`` to see all available models.
 - **enable**: Set to ``true`` to save models every folds
 - **compression**: 0-9 (0=no compression, 3=balanced, 9=maximum)
 
-9. Set Output Location
-~~~~~~~~~~~~~~~~~~~~~~
+12. Set Output Location
+~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
 

@@ -114,8 +114,12 @@ Controls the machine learning pipeline configuration.
     models = LR,RF,XGB,CatBoost
     outer_folds = 5
     inner_folds = 3
+    outer_cv_repeats = 1
     calibrate_threshold = false
     threshold_method = auto
+    calibrate_probabilities = false
+    probability_calibration_method = sigmoid
+    probability_calibration_cv = 5
 
 **Parameters:**
 
@@ -146,6 +150,30 @@ Controls the machine learning pipeline configuration.
   - ``cv``: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
   - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
   - Only used when ``calibrate_threshold = true``
+
+- ``outer_cv_repeats`` - Number of repetitions for outer cross-validation (optional, default: ``1``)
+
+  - ``1``: Standard (non-repeated) cross-validation
+  - ``>1``: Repeated stratified cross-validation with different random shuffles
+  - Provides more robust performance estimates by averaging over multiple CV runs
+
+- ``calibrate_probabilities`` - Enable post-hoc probability calibration (optional, default: ``false``)
+
+  - ``true``: Apply CalibratedClassifierCV to the best estimator from GridSearchCV
+  - ``false``: Use uncalibrated probability predictions
+  - Applied after hyper-parameters tuning and before threshold tuning
+
+- ``probability_calibration_method`` - Method for probability calibration (optional, default: ``sigmoid``)
+
+  - ``sigmoid``: Platt scaling - fits a logistic regression on the classifier outputs
+  - ``isotonic``: Isotonic regression - non-parametric, monotonic transformation
+  - Only used when ``calibrate_probabilities = true``
+
+- ``probability_calibration_cv`` - Number of folds for probability calibration (optional, default: ``5``)
+
+  - CV folds used internally by CalibratedClassifierCV
+  - Must be at least 2
+  - Only used when ``calibrate_probabilities = true``
 
 [Reproducibility] Section
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -322,6 +350,8 @@ The pipeline generates the following output structure:
     │   └── summary_all.csv                           # Global summary across all models and targets
     ├── confusion_matrices/                           # Confusion matrix heatmaps
     │   └── Confusion_matrix_{model}_{target}.png     # One PNG per model-target combination
+    ├── calibration/                                  # Calibration diagnostics
+    │   └── reliability_curve_{model}_{target}.png    # Reliability curves per fold + aggregate
     ├── report.html                                   # Comprehensive HTML report
     ├── reproducibility.json                          # Reproducibility manifest
     └── respredai.log                                 # Execution log (if verbosity > 0)
@@ -331,11 +361,17 @@ Metrics Files
 
 Each ``{model}_metrics_detailed.csv`` contains:
 
-- **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC, VME, ME)
+- **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC, VME, ME, Brier Score, ECE, MCE)
 - **Mean**: Mean value across folds
 - **Std**: Standard deviation across folds
 - **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 1,000 resamples)
 - **CI95_upper**: Upper bound of 95% confidence interval (bootstrap, 1,000 resamples)
+
+**Calibration Metrics** (always computed, independent of probability calibration setting):
+
+- **Brier Score**: Mean squared error of probability predictions (lower is better, range 0-1)
+- **ECE** (Expected Calibration Error): Weighted average of calibration error across probability bins
+- **MCE** (Maximum Calibration Error): Maximum calibration error across any probability bin
 
 Confusion Matrix Plots
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -352,9 +388,10 @@ HTML Report
 The ``report.html`` file provides a comprehensive, self-contained summary:
 
 - **Metadata**: Configuration settings, data path, timestamp
-- **Framework Summary**: Pipeline parameters, models, and targets
+- **Framework Summary**: Pipeline parameters, models, targets, and calibration settings
 - **Results Tables**: Per-target metrics with 95% confidence intervals for each model
 - **Confusion Matrices**: Embedded visualizations in a responsive grid layout
+- **Calibration Diagnostics**: Brier Score, ECE, MCE metrics with 95% CIs, plus reliability curve plots
 
 The report can be opened in any web browser and shared without additional dependencies.
 
