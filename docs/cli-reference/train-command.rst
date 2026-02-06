@@ -88,10 +88,22 @@ The ``train`` command uses the same configuration file as ``run``, but some para
      - Only used by ``run`` for nested CV
    * - ``calibrate_threshold``
      - Yes
-     - Enables threshold calibration
+     - Enables threshold optimization
    * - ``threshold_method``
      - Yes
-     - Method for threshold calibration
+     - Method for threshold optimization
+   * - ``threshold_objective``
+     - Yes
+     - Objective function for threshold optimization
+   * - ``calibrate_probabilities``
+     - Yes
+     - Enables probability calibration
+   * - ``probability_calibration_method``
+     - Yes
+     - Calibration method (sigmoid or isotonic)
+   * - ``probability_calibration_cv``
+     - Yes
+     - CV folds for probability calibration
    * - ``seed``
      - Yes
      - Random seed for reproducibility
@@ -173,17 +185,24 @@ Example Workflow
         --data new_patients.csv \
         --output ./evaluation_results/
 
-Threshold Calibration
----------------------
+Calibration
+-----------
 
-If ``calibrate_threshold = true`` in the config, the train command:
+**Probability Calibration** (if ``calibrate_probabilities = true``):
 
-1. Runs GridSearchCV to find best HP
-2. Gets out-of-fold predictions using the best estimator
-3. Calculates optimal threshold using Youden's J statistic
-4. Saves the calibrated threshold with the model
+1. Wraps best estimator in ``CalibratedClassifierCV``
+2. Fits on full dataset with internal CV
+3. Saves calibrated model
 
-This threshold is automatically applied during evaluation.
+**Threshold Optimization** (if ``calibrate_threshold = true``):
+
+1. Runs GridSearchCV to find best hyperparameters
+2. Selects method: OOF (< 1000 samples) or CV (>= 1000 samples)
+3. **OOF**: Gets out-of-fold predictions, optimizes threshold using configured objective
+4. **CV**: Uses ``TunedThresholdClassifierCV`` for integrated threshold optimization
+5. Saves optimized threshold with the model
+
+Both calibrations are automatically applied during evaluation.
 
 See Also
 --------

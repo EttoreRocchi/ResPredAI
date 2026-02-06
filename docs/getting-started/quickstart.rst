@@ -31,6 +31,8 @@ Open ``my_config.ini`` and customize it for your data:
     inner_folds = 3
     calibrate_threshold = false
     threshold_method = auto
+    calibrate_probabilities = false
+    probability_calibration_method = sigmoid
 
     [Reproducibility]
     seed = 42
@@ -67,7 +69,7 @@ Configuration Sections
    * - ``[Data]``
      - Input data path, target columns, feature types
    * - ``[Pipeline]``
-     - Models to train, CV folds, threshold calibration
+     - Models to train, CV folds, threshold optimization and probability calibration
    * - ``[Reproducibility]``
      - Random seed for reproducibility
    * - ``[Log]``

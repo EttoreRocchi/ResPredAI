@@ -29,7 +29,9 @@ Features
 
 - **Nested Cross-Validation**: Rigorous evaluation with inner CV for hyperparameter tuning and outer CV for performance estimation
 - **8 ML Models**: Support for Logistic Regression, Random Forest, XGBoost, CatBoost, MLP, TabPFN, and SVM variants
-- **Threshold Calibration**: Optional calibration using Youden's J statistic
+- **Threshold Optimization**: Optional threshold tuning using Youden's J statistic, F1, F2, or cost-sensitive objectives
+- **Probability Calibration**: Post-hoc calibration with sigmoid (Platt) or isotonic methods
+- **Calibration Diagnostics**: Brier Score, ECE, MCE metrics with reliability curves
 - **Group-Aware CV**: Prevent data leakage with stratified group k-fold
 - **Feature Importance**: Native importance extraction with SHAP fallback
 - **Model Persistence**: Save and resume training, cross-dataset validation
@@ -65,9 +67,12 @@ The pipeline generates:
     │   └── summary_all.csv                           # Global summary
     ├── confusion_matrices/                           # Confusion matrix heatmaps
     │   └── Confusion_matrix_{model}_{target}.png
+    ├── calibration/                                  # Calibration diagnostics
+    │   └── {target}/{model}_reliability_curve.png
     ├── feature_importance/                           # Feature importance (optional)
     │   └── {target}/{model}_feature_importance.csv
     ├── report.html                                   # Comprehensive HTML report
+    ├── reproducibility.json                          # Reproducibility manifest
     └── respredai.log                                 # Execution log
 
 Citation

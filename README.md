@@ -87,7 +87,7 @@ outer_cv_repeats = 1
 calibrate_probabilities = false
 probability_calibration_method = sigmoid  # sigmoid or isotonic
 probability_calibration_cv = 5
-# Threshold calibration
+# Threshold optimization
 calibrate_threshold = false
 threshold_method = auto
 # Threshold optimization objective: youden (default), f1, f2, cost_sensitive

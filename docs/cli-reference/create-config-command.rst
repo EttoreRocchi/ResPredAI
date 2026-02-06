@@ -116,8 +116,8 @@ Use ``respredai list-models`` to see all available models.
 - **outer_folds**: Number of folds for performance evaluation
 - **inner_folds**: Number of folds for GridSearchCV hyperparameter tuning
 
-4. Configure Threshold Calibration (Optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+4. Configure Threshold Optimization (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
 
@@ -132,7 +132,7 @@ Use ``respredai list-models`` to see all available models.
   - ``true``: Calibrate threshold using the specified objective
   - ``false``: Use default threshold of 0.5
 
-- **threshold_method**: Method for threshold calibration (only used when ``calibrate_threshold = true``)
+- **threshold_method**: Method for threshold optimization (only used when ``calibrate_threshold = true``)
 
   - ``auto``: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
   - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold across all concatenated samples

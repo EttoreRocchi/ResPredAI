@@ -136,14 +136,14 @@ Controls the machine learning pipeline configuration.
 
   - Used for hyperparameter tuning with GridSearchCV
 
-- ``calibrate_threshold`` - Enable decision threshold calibration (optional, default: ``false``)
+- ``calibrate_threshold`` - Enable decision threshold optimization (optional, default: ``false``)
 
-  - ``true``: Calibrate threshold using Youden's J statistic (Sensitivity + Specificity - 1)
+  - ``true``: Optimize threshold using Youden's J statistic (Sensitivity + Specificity - 1)
   - ``false``: Use default threshold of 0.5
-  - Threshold calibration uses ``inner_folds`` for cross-validation
-  - Hyperparameters are tuned first (optimizing ROC-AUC), then threshold is calibrated
+  - Threshold optimization uses ``inner_folds`` for cross-validation
+  - Hyperparameters are tuned first (optimizing ROC-AUC), then threshold is optimized
 
-- ``threshold_method`` - Method for threshold calibration (optional, default: ``auto``)
+- ``threshold_method`` - Method for threshold optimization (optional, default: ``auto``)
 
   - ``auto``: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
   - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold maximizing Youden's J across all concatenated samples

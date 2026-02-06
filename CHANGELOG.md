@@ -2,6 +2,17 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.6.1] - 2026-02-06
+
+### Fixed
+- `train` subcommand now applies probability calibration (`CalibratedClassifierCV`) when `calibrate_probabilities = true`
+- `train` subcommand now supports CV threshold method (`TunedThresholdClassifierCV`) in addition to OOF
+- Reproducibility manifest now includes probability calibration parameters
+
+### Changed
+- `create-config` template now includes `threshold_objective`, `vme_cost`, `me_cost` parameters
+- `validate-config` summary table now displays probability calibration and threshold objective details
+
 ## [1.6.0] - 2026-02-05
 
 ### Added
@@ -138,7 +149,7 @@ All changes to ResPredAI are documented in this file.
 ## [1.1.0] - 2025-12-04
 
 ### Added
-- **Threshold calibration** with dual methods (OOF and CV) using Youden's J statistic
+- **Threshold optimization** with dual methods (OOF and CV) using Youden's J statistic
   - OOF method: Global optimization on concatenated out-of-fold predictions
   - CV method: Per-fold optimization with threshold averaging
   - Auto selection based on dataset size (n < 1000: OOF, otherwise: CV)
