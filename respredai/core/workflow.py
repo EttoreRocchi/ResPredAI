@@ -324,9 +324,9 @@ def perform_pipeline(
                                 f"(method={config_handler.probability_calibration_method})."
                             )
 
-                    # Step 3: Threshold calibration using Youden's J statistic (if enabled)
+                    # Step 3: Threshold optimization using Youden's J statistic (if enabled)
                     if config_handler.calibrate_threshold:
-                        # Determine threshold calibration method
+                        # Determine threshold optimization method
                         threshold_method = config_handler.threshold_method
                         if threshold_method == "auto":
                             # Auto: use OOF for small datasets, CV for large datasets
@@ -400,7 +400,7 @@ def perform_pipeline(
                             # Set best hyperparameters on the unfitted estimator
                             grid.estimator.set_params(**best_params)
 
-                            # Create CV splitter for threshold calibration
+                            # Create CV splitter for threshold optimization
                             inner_tuner_cv = StratifiedKFold(
                                 n_splits=config_handler.inner_folds,
                                 shuffle=True,
@@ -420,7 +420,7 @@ def perform_pipeline(
                             best_classifier = tuned_model
                             best_threshold = tuned_model.best_threshold_
                     else:
-                        # No threshold calibration - use GridSearchCV's best estimator with default threshold
+                        # No threshold optimization - use GridSearchCV's best estimator with default threshold
                         best_classifier = best_estimator
                         best_threshold = 0.5
 
@@ -801,57 +801,116 @@ def perform_training(
             best_estimator = grid.best_estimator_
             best_params = grid.best_params_
 
-            # Threshold calibration using OOF predictions
+            # Post-hoc probability calibration (if enabled)
+            if config_handler.calibrate_probabilities:
+                if datasetter.groups is not None:
+                    prob_calib_cv = StratifiedGroupKFold(
+                        n_splits=config_handler.probability_calibration_cv,
+                        shuffle=True,
+                        random_state=config_handler.seed,
+                    )
+                    prob_calib_splits = list(prob_calib_cv.split(X_scaled, y, datasetter.groups))
+                else:
+                    prob_calib_splits = config_handler.probability_calibration_cv
+
+                calibrated_classifier = CalibratedClassifierCV(
+                    estimator=best_estimator,
+                    method=config_handler.probability_calibration_method,
+                    cv=prob_calib_splits,
+                    n_jobs=1,
+                )
+                calibrated_classifier.fit(X_scaled, y)
+                best_estimator = calibrated_classifier
+
+                if config_handler.verbosity == 2:
+                    config_handler.logger.info(
+                        f"Probability calibration applied "
+                        f"(method={config_handler.probability_calibration_method})."
+                    )
+
+            # Threshold optimization
             best_threshold = 0.5
             if config_handler.calibrate_threshold:
                 threshold_method = config_handler.threshold_method
                 if threshold_method == "auto":
                     threshold_method = "oof" if len(y) < 1000 else "cv"
 
-                if datasetter.groups is not None:
-                    inner_cv = StratifiedGroupKFold(
+                if threshold_method == "oof":
+                    # Method 1: Out-of-Fold (OOF) predictions approach
+                    if datasetter.groups is not None:
+                        inner_cv = StratifiedGroupKFold(
+                            n_splits=config_handler.inner_folds,
+                            shuffle=True,
+                            random_state=config_handler.seed,
+                        )
+                        cv_fit_params = {"groups": datasetter.groups}
+                    else:
+                        inner_cv = StratifiedKFold(
+                            n_splits=config_handler.inner_folds,
+                            shuffle=True,
+                            random_state=config_handler.seed,
+                        )
+                        cv_fit_params = {}
+
+                    # Get OOF predictions
+                    y_pred_proba_oof = cross_val_predict(
+                        best_estimator,
+                        X_scaled,
+                        y,
+                        cv=inner_cv,
+                        method="predict_proba",
+                        **cv_fit_params,
+                    )[:, 1]
+
+                    # Find optimal threshold using configured objective
+                    from respredai.core.metrics import get_threshold_scorer
+
+                    threshold_scorer = get_threshold_scorer(
+                        config_handler.threshold_objective,
+                        config_handler.vme_cost,
+                        config_handler.me_cost,
+                    )
+
+                    _, _, thresholds = roc_curve(y, y_pred_proba_oof)
+
+                    best_score = float("-inf")
+                    best_threshold = 0.5
+                    for thresh in thresholds:
+                        y_pred_thresh = (y_pred_proba_oof >= thresh).astype(int)
+                        score = threshold_scorer(y.values, y_pred_thresh)
+                        if score > best_score:
+                            best_score = score
+                            best_threshold = thresh
+
+                else:  # threshold_method == "cv"
+                    # Method 2: TunedThresholdClassifierCV approach
+                    from respredai.core.metrics import get_threshold_scorer
+
+                    threshold_scorer_fn = get_threshold_scorer(
+                        config_handler.threshold_objective,
+                        config_handler.vme_cost,
+                        config_handler.me_cost,
+                    )
+                    objective_scorer = make_scorer(threshold_scorer_fn)
+
+                    # Set best hyperparameters on the unfitted estimator
+                    grid.estimator.set_params(**best_params)
+
+                    inner_tuner_cv = StratifiedKFold(
                         n_splits=config_handler.inner_folds,
                         shuffle=True,
                         random_state=config_handler.seed,
                     )
-                    cv_fit_params = {"groups": datasetter.groups}
-                else:
-                    inner_cv = StratifiedKFold(
-                        n_splits=config_handler.inner_folds,
-                        shuffle=True,
-                        random_state=config_handler.seed,
+
+                    tuned_model = TunedThresholdClassifierCV(
+                        estimator=grid.estimator,
+                        cv=inner_tuner_cv,
+                        scoring=objective_scorer,
+                        n_jobs=1,
                     )
-                    cv_fit_params = {}
-
-                # Get OOF predictions
-                y_pred_proba_oof = cross_val_predict(
-                    best_estimator,
-                    X_scaled,
-                    y,
-                    cv=inner_cv,
-                    method="predict_proba",
-                    **cv_fit_params,
-                )[:, 1]
-
-                # Find optimal threshold using configured objective
-                from respredai.core.metrics import get_threshold_scorer
-
-                threshold_scorer = get_threshold_scorer(
-                    config_handler.threshold_objective,
-                    config_handler.vme_cost,
-                    config_handler.me_cost,
-                )
-
-                _, _, thresholds = roc_curve(y, y_pred_proba_oof)
-
-                best_score = float("-inf")
-                best_threshold = 0.5
-                for thresh in thresholds:
-                    y_pred_thresh = (y_pred_proba_oof >= thresh).astype(int)
-                    score = threshold_scorer(y.values, y_pred_thresh)
-                    if score > best_score:
-                        best_score = score
-                        best_threshold = thresh
+                    tuned_model.fit(X_scaled, y)
+                    best_estimator = tuned_model
+                    best_threshold = tuned_model.best_threshold_
 
             # Save model bundle
             model_bundle = {

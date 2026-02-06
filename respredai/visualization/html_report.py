@@ -304,7 +304,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     else:
         imputation_details = imputation_method
 
-    # Threshold calibration details
+    # Threshold optimization details
     if calibrate_threshold:
         threshold_details = (
             f"Enabled ({threshold_method.upper()}, objective: {threshold_objective})"
@@ -336,7 +336,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><td>Outer CV Folds</td><td>{outer_cv_details}</td></tr>
             <tr><td>Inner CV Folds</td><td>{inner_folds}</td></tr>
             <tr><td>Probability Calibration</td><td>{prob_calib_details}</td></tr>
-            <tr><td>Threshold Calibration</td><td>{threshold_details}</td></tr>
+            <tr><td>Threshold Optimization</td><td>{threshold_details}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{imputation_details}</td></tr>
             <tr><td>Confidence Intervals</td><td>95% (1,000 bootstrap samples)</td></tr>
         </table>

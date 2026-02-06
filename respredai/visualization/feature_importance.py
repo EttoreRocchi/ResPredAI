@@ -18,7 +18,7 @@ def unwrap_calibrated_model(model):
     Recursively extract underlying estimator from calibration wrappers.
 
     Handles nested wrappers when both calibration types are enabled:
-    - TunedThresholdClassifierCV (threshold calibration with cv method)
+    - TunedThresholdClassifierCV (threshold optimization with cv method)
     - CalibratedClassifierCV (probability calibration)
 
     Returns the innermost model with coef_/feature_importances_.

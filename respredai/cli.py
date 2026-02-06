@@ -53,9 +53,19 @@ def print_config_info(config_handler: ConfigHandler) -> None:
     table.add_row("Models", ", ".join(config_handler.models))
     table.add_row("Outer Folds", str(config_handler.outer_folds))
     table.add_row("Inner Folds", str(config_handler.inner_folds))
-    table.add_row("Threshold Calibration", str(config_handler.calibrate_threshold))
+    table.add_row("Threshold Optimization", str(config_handler.calibrate_threshold))
     if config_handler.calibrate_threshold:
-        table.add_row("Threshold Method", config_handler.threshold_method.upper())
+        table.add_row("  Threshold Method", config_handler.threshold_method.upper())
+        table.add_row("  Threshold Objective", config_handler.threshold_objective)
+        if config_handler.threshold_objective == "cost_sensitive":
+            table.add_row("  VME Cost", str(config_handler.vme_cost))
+            table.add_row("  ME Cost", str(config_handler.me_cost))
+    table.add_row("Probability Calibration", str(config_handler.calibrate_probabilities))
+    if config_handler.calibrate_probabilities:
+        table.add_row("  Calibration Method", config_handler.probability_calibration_method)
+        table.add_row("  Calibration CV Folds", str(config_handler.probability_calibration_cv))
+    if config_handler.outer_cv_repeats > 1:
+        table.add_row("Outer CV Repeats", str(config_handler.outer_cv_repeats))
     table.add_row("Random Seed", str(config_handler.seed))
     table.add_row("Parallel Jobs", str(config_handler.n_jobs))
     table.add_row("Output Folder", str(config_handler.out_folder))
@@ -784,6 +794,11 @@ inner_folds = 3
 outer_cv_repeats = 1
 calibrate_threshold = false
 threshold_method = auto
+# Threshold optimization objective: youden, f1, f2, or cost_sensitive
+threshold_objective = youden
+# Cost weights for cost_sensitive objective (VME = false negatives, ME = false positives)
+# vme_cost = 1.0
+# me_cost = 1.0
 # Post-hoc probability calibration using CalibratedClassifierCV
 calibrate_probabilities = false
 # Calibration method: sigmoid (Platt scaling) or isotonic

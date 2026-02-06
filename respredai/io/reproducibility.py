@@ -84,6 +84,9 @@ def create_reproducibility_manifest(config_handler, datasetter) -> dict:
             "calibrate_threshold": config_handler.calibrate_threshold,
             "threshold_method": config_handler.threshold_method,
             "threshold_objective": config_handler.threshold_objective,
+            "calibrate_probabilities": config_handler.calibrate_probabilities,
+            "probability_calibration_method": config_handler.probability_calibration_method,
+            "probability_calibration_cv": config_handler.probability_calibration_cv,
             "imputation_method": config_handler.imputation_method,
         },
     }
