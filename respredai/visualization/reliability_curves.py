@@ -13,6 +13,7 @@ def plot_reliability_curve(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     n_bins: int = 10,
+    strategy: str = "quantile",
     title: str = "Reliability Curve",
     ax: Optional[plt.Axes] = None,
 ) -> plt.Axes:
@@ -44,7 +45,9 @@ def plot_reliability_curve(
         fig, ax = plt.subplots(figsize=(6, 6))
 
     # Compute reliability curve data
-    prob_true, prob_pred, bin_counts = compute_reliability_curve(y_true, y_prob, n_bins=n_bins)
+    prob_true, prob_pred, bin_counts = compute_reliability_curve(
+        y_true, y_prob, n_bins=n_bins, strategy=strategy
+    )
 
     # Perfect calibration line (diagonal)
     ax.plot([0, 1], [0, 1], "k--", label="Perfectly calibrated", alpha=0.7)
@@ -73,6 +76,7 @@ def save_reliability_curves(
     model: str,
     target: str,
     n_bins: int = 10,
+    strategy: str = "quantile",
 ) -> Path:
     """
     Save reliability curves for all folds and an aggregate.
@@ -118,13 +122,20 @@ def save_reliability_curves(
 
     # Plot individual folds
     for i, (y_true, y_prob, label) in enumerate(zip(y_true_list, y_prob_list, fold_labels)):
-        plot_reliability_curve(y_true, y_prob, n_bins=n_bins, title=label, ax=axes[i])
+        plot_reliability_curve(
+            y_true, y_prob, n_bins=n_bins, strategy=strategy, title=label, ax=axes[i]
+        )
 
     # Plot aggregate (all folds combined)
     y_true_all = np.concatenate(y_true_list)
     y_prob_all = np.concatenate(y_prob_list)
     plot_reliability_curve(
-        y_true_all, y_prob_all, n_bins=n_bins, title="Aggregate", ax=axes[n_folds]
+        y_true_all,
+        y_prob_all,
+        n_bins=n_bins,
+        strategy=strategy,
+        title="Aggregate",
+        ax=axes[n_folds],
     )
 
     # Hide unused axes

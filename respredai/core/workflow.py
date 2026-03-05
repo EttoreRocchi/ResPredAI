@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import confusion_matrix, make_scorer, roc_curve
@@ -27,6 +28,33 @@ from respredai.core.models import generate_summary_report, get_model_path, load_
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.confusion_matrix import save_cm
 from respredai.visualization.html_report import generate_html_report
+
+
+def _deduplicate_repeated_cv_predictions(
+    indices: list,
+    y_true: list,
+    y_pred: list,
+    y_prob: list,
+) -> tuple:
+    """Deduplicate sample-level predictions from repeated CV by averaging per sample."""
+    indices = np.array(indices)
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    y_prob = np.array(y_prob)
+
+    unique_indices = np.unique(indices)
+    dedup_true = np.empty(len(unique_indices), dtype=y_true.dtype)
+    dedup_pred = np.empty(len(unique_indices), dtype=y_pred.dtype)
+    dedup_prob = np.empty((len(unique_indices), y_prob.shape[1]), dtype=y_prob.dtype)
+
+    for j, idx in enumerate(unique_indices):
+        mask = indices == idx
+        dedup_true[j] = y_true[mask][0]
+        avg_prob = y_prob[mask].mean(axis=0)
+        dedup_prob[j] = avg_prob
+        dedup_pred[j] = int(avg_prob[1] >= 0.5)
+
+    return dedup_true, dedup_pred, dedup_prob
 
 
 def perform_pipeline(
@@ -144,6 +172,7 @@ def perform_pipeline(
         all_y_true = {}
         all_y_pred = {}
         all_y_prob = {}
+        all_test_indices = {}
         # Per-fold data for reliability curves (lists of arrays, one per fold)
         fold_y_true_calib = {}
         fold_y_prob_calib = {}
@@ -184,6 +213,7 @@ def perform_pipeline(
                         all_y_true[target] = model_data["metrics"].get("all_y_true", [])
                         all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
+                        all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
 
                         # Initialize empty calibration data (per-fold data not saved)
                         fold_y_true_calib[target] = []
@@ -215,6 +245,7 @@ def perform_pipeline(
                         all_y_true[target] = model_data["metrics"].get("all_y_true", [])
                         all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
+                        all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
 
                         if config_handler.verbosity:
                             config_handler.logger.info(
@@ -232,6 +263,7 @@ def perform_pipeline(
                 all_y_true[target] = []
                 all_y_pred[target] = []
                 all_y_prob[target] = []
+                all_test_indices[target] = []
                 # Per-fold data for reliability curves
                 fold_y_true_calib[target] = []
                 fold_y_prob_calib[target] = []
@@ -286,6 +318,7 @@ def perform_pipeline(
                     # Step 2: Get best estimator and hyperparameters from GridSearchCV
                     best_estimator = grid.best_estimator_
                     best_params = grid.best_params_
+                    uncalibrated_estimator = best_estimator
 
                     # Step 2.5: Post-hoc probability calibration (if enabled)
                     # This is AFTER model selection but BEFORE threshold tuning
@@ -351,8 +384,14 @@ def perform_pipeline(
                                 cv_fit_params = {}
 
                             # Get OOF probability predictions on training data
+                            # Use uncalibrated estimator to avoid double calibration
+                            oof_estimator = (
+                                uncalibrated_estimator
+                                if config_handler.calibrate_probabilities
+                                else best_estimator
+                            )
                             y_pred_proba_oof = cross_val_predict(
-                                best_estimator,
+                                oof_estimator,
                                 X_train_scaled,
                                 y_train,
                                 cv=inner_cv,
@@ -397,8 +436,19 @@ def perform_pipeline(
                             )
                             objective_scorer = make_scorer(threshold_scorer_fn)
 
-                            # Set best hyperparameters on the unfitted estimator
-                            grid.estimator.set_params(**best_params)
+                            # Build the estimator for threshold tuning
+                            if config_handler.calibrate_probabilities:
+                                base_est = clone(grid.estimator)
+                                base_est.set_params(**best_params)
+                                estimator_for_threshold = CalibratedClassifierCV(
+                                    estimator=base_est,
+                                    method=config_handler.probability_calibration_method,
+                                    cv=prob_calib_splits,
+                                    n_jobs=1,
+                                )
+                            else:
+                                grid.estimator.set_params(**best_params)
+                                estimator_for_threshold = grid.estimator
 
                             # Create CV splitter for threshold optimization
                             inner_tuner_cv = StratifiedKFold(
@@ -407,9 +457,8 @@ def perform_pipeline(
                                 random_state=config_handler.seed,
                             )
 
-                            # Wrap the unfitted estimator in TunedThresholdClassifierCV
                             tuned_model = TunedThresholdClassifierCV(
-                                estimator=grid.estimator,
+                                estimator=estimator_for_threshold,
                                 cv=inner_tuner_cv,
                                 scoring=objective_scorer,
                                 n_jobs=1,
@@ -446,6 +495,7 @@ def perform_pipeline(
                     all_y_true[target].extend(y_test.values)
                     all_y_pred[target].extend(y_pred)
                     all_y_prob[target].extend(y_prob)
+                    all_test_indices[target].extend(test_set)
 
                     # Store per-fold data for reliability curves (as separate arrays)
                     fold_y_true_calib[target].append(y_test.values)
@@ -524,6 +574,7 @@ def perform_pipeline(
                         "all_y_true": all_y_true[target],
                         "all_y_pred": all_y_pred[target],
                         "all_y_prob": all_y_prob[target],
+                        "all_test_indices": all_test_indices[target],
                     }
 
                     save_models(
@@ -550,25 +601,64 @@ def perform_pipeline(
 
             # Calculate summary metrics for progress callback
             if progress_callback:
-                summary_metrics = {
-                    "F1 (weighted)": np.nanmean(f1scores[target]),
-                    "F1_std": np.nanstd(f1scores[target]),
-                    "MCC": np.nanmean(mccs[target]),
-                    "MCC_std": np.nanstd(mccs[target]),
-                    "AUROC": np.nanmean(aurocs[target]),
-                    "AUROC_std": np.nanstd(aurocs[target]),
-                }
+                if config_handler.outer_cv_repeats > 1:
+                    n_folds = config_handler.outer_folds
+                    n_repeats = config_handler.outer_cv_repeats
+                    repeat_f1 = [
+                        np.nanmean(f1scores[target][r * n_folds : (r + 1) * n_folds])
+                        for r in range(n_repeats)
+                    ]
+                    repeat_mcc = [
+                        np.nanmean(mccs[target][r * n_folds : (r + 1) * n_folds])
+                        for r in range(n_repeats)
+                    ]
+                    repeat_auroc = [
+                        np.nanmean(aurocs[target][r * n_folds : (r + 1) * n_folds])
+                        for r in range(n_repeats)
+                    ]
+                    summary_metrics = {
+                        "F1 (weighted)": np.nanmean(repeat_f1),
+                        "F1_std": np.nanstd(repeat_f1),
+                        "MCC": np.nanmean(repeat_mcc),
+                        "MCC_std": np.nanstd(repeat_mcc),
+                        "AUROC": np.nanmean(repeat_auroc),
+                        "AUROC_std": np.nanstd(repeat_auroc),
+                    }
+                else:
+                    summary_metrics = {
+                        "F1 (weighted)": np.nanmean(f1scores[target]),
+                        "F1_std": np.nanstd(f1scores[target]),
+                        "MCC": np.nanmean(mccs[target]),
+                        "MCC_std": np.nanstd(mccs[target]),
+                        "AUROC": np.nanmean(aurocs[target]),
+                        "AUROC_std": np.nanstd(aurocs[target]),
+                    }
                 progress_callback.complete_target(target, summary_metrics)
 
         # Calculate average confusion matrices
-        average_cms = {
-            target: pd.DataFrame(
-                data=np.nanmean(cms[target], axis=0),
-                index=["Susceptible", "Resistant"],
-                columns=["Susceptible", "Resistant"],
-            )
-            for target in Y.columns
-        }
+        if config_handler.outer_cv_repeats > 1:
+            n_folds = config_handler.outer_folds
+            n_repeats = config_handler.outer_cv_repeats
+            average_cms = {}
+            for target in Y.columns:
+                repeat_cms = [
+                    np.nanmean(cms[target][r * n_folds : (r + 1) * n_folds], axis=0)
+                    for r in range(n_repeats)
+                ]
+                average_cms[target] = pd.DataFrame(
+                    data=np.nanmean(repeat_cms, axis=0),
+                    index=["Susceptible", "Resistant"],
+                    columns=["Susceptible", "Resistant"],
+                )
+        else:
+            average_cms = {
+                target: pd.DataFrame(
+                    data=np.nanmean(cms[target], axis=0),
+                    index=["Susceptible", "Resistant"],
+                    columns=["Susceptible", "Resistant"],
+                )
+                for target in Y.columns
+            }
 
         # Save confusion matrix visualizations
         save_cm(
@@ -591,15 +681,28 @@ def perform_pipeline(
                 / f"{model_safe_name}_metrics_detailed.csv"
             )
 
+            # Deduplicate samples for bootstrap CI when using repeated CV
+            if config_handler.outer_cv_repeats > 1 and all_test_indices[target]:
+                y_true_ci, y_pred_ci, y_prob_ci = _deduplicate_repeated_cv_predictions(
+                    all_test_indices[target],
+                    all_y_true[target],
+                    all_y_pred[target],
+                    all_y_prob[target],
+                )
+            else:
+                y_true_ci = np.array(all_y_true[target])
+                y_pred_ci = np.array(all_y_pred[target])
+                y_prob_ci = np.array(all_y_prob[target])
+
             save_metrics_summary(
                 metrics_dict=all_metrics[target],
                 output_path=metrics_output_path,
                 confidence=0.95,
                 n_bootstrap=1_000,
                 random_state=config_handler.seed,
-                y_true_all=np.array(all_y_true[target]),
-                y_pred_all=np.array(all_y_pred[target]),
-                y_prob_all=np.array(all_y_prob[target]),
+                y_true_all=y_true_ci,
+                y_pred_all=y_pred_ci,
+                y_prob_all=y_prob_ci,
             )
 
             # Generate reliability curves for this model-target combination
@@ -612,7 +715,15 @@ def perform_pipeline(
                 save_reliability_curves(
                     y_true_list=fold_y_true_calib[target],
                     y_prob_list=fold_y_prob_calib[target],
-                    fold_labels=[f"Fold {i + 1}" for i in range(n_total_folds)],
+                    fold_labels=(
+                        [
+                            f"R{r + 1}-F{f + 1}"
+                            for r in range(config_handler.outer_cv_repeats)
+                            for f in range(config_handler.outer_folds)
+                        ]
+                        if config_handler.outer_cv_repeats > 1
+                        else [f"Fold {i + 1}" for i in range(n_total_folds)]
+                    ),
                     out_dir=calibration_dir,
                     model=model_safe_name,
                     target=target_safe_name,

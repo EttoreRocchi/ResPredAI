@@ -172,7 +172,7 @@ def compute_reliability_curve(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     n_bins: int = 10,
-    strategy: str = "uniform",
+    strategy: str = "quantile",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute reliability curve (calibration curve) data.
