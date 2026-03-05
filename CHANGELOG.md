@@ -2,6 +2,18 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.6.2] - 2026-03-05
+
+### Fixed
+- Bootstrap confidence intervals now deduplicate samples when using repeated outer CV
+- Threshold optimization (CV method) now correctly uses the calibrated estimator when probability calibration is enabled
+- Metrics aggregation now respects repeat structure
+- Reliability curve fold labels now indicate repeat number when using repeated CV
+- Reliability curves now use quantile binning for smoother calibration plots on imbalanced data
+
+### Added
+- Makefile for development workflows
+
 ## [1.6.1] - 2026-02-06
 
 ### Fixed
