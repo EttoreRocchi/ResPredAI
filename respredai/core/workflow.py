@@ -346,8 +346,16 @@ def _optimize_threshold(
             )
             cv_fit_params = {}
 
+        oof_estimator = clone(best_estimator)
+        if (
+            config_handler.calibrate_probabilities
+            and hasattr(oof_estimator, "cv")
+            and isinstance(getattr(oof_estimator, "cv", None), list)
+        ):
+            oof_estimator.cv = config_handler.probability_calibration_cv
+
         y_pred_proba_oof = cross_val_predict(
-            best_estimator,
+            oof_estimator,
             X_train_scaled,
             y_train,
             cv=inner_cv,
@@ -1119,10 +1127,16 @@ def perform_temporal_validation(
                             )
                             cv_fit_params = {}
 
-                        # Use calibrated estimator so threshold is optimized in
-                        # the same probability space it will be applied in.
+                        oof_estimator = clone(best_estimator)
+                        if (
+                            config_handler.calibrate_probabilities
+                            and hasattr(oof_estimator, "cv")
+                            and isinstance(getattr(oof_estimator, "cv", None), list)
+                        ):
+                            oof_estimator.cv = config_handler.probability_calibration_cv
+
                         y_pred_proba_oof = cross_val_predict(
-                            best_estimator,
+                            oof_estimator,
                             X_train_scaled,
                             y_train,
                             cv=inner_cv,
