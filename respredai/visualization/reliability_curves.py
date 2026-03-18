@@ -1,7 +1,8 @@
 """Reliability curve (calibration plot) generation for ResPredAI."""
 
+import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +32,8 @@ def plot_reliability_curve(
         Predicted probabilities for the positive class.
     n_bins : int, default=10
         Number of bins for the calibration curve.
+    strategy : str, default="quantile"
+        Strategy for defining bin edges: "uniform" or "quantile".
     title : str, default="Reliability Curve"
         Title for the plot.
     ax : plt.Axes, optional
@@ -69,15 +72,15 @@ def plot_reliability_curve(
 
 
 def save_reliability_curves(
-    y_true_list: List[np.ndarray],
-    y_prob_list: List[np.ndarray],
-    fold_labels: List[str],
+    y_true_list: list[np.ndarray],
+    y_prob_list: list[np.ndarray],
+    fold_labels: list[str],
     out_dir: Path,
     model: str,
     target: str,
     n_bins: int = 10,
     strategy: str = "quantile",
-) -> Path:
+) -> Optional[Path]:
     """
     Save reliability curves for all folds and an aggregate.
 
@@ -100,11 +103,13 @@ def save_reliability_curves(
         Target name (used in filename).
     n_bins : int, default=10
         Number of bins for calibration curves.
+    strategy : str, default="quantile"
+        Strategy for defining bin edges: "uniform" or "quantile".
 
     Returns
     -------
-    Path
-        Path to the saved image file.
+    Optional[Path]
+        Path to the saved image file, or None if no data to plot.
     """
     n_folds = len(y_true_list)
 
@@ -155,7 +160,9 @@ def save_reliability_curves(
     # Save the figure
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"reliability_curve_{model}_{target}.png"
+    model_safe = re.sub(r"[^\w.-]", "_", model)
+    target_safe = re.sub(r"[^\w.-]", "_", target)
+    out_path = out_dir / f"reliability_curve_{model_safe}_{target_safe}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 

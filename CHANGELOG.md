@@ -2,6 +2,34 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.7.0] - 2026-03-18
+
+### Added
+- **Temporal (Prospective-Style) Validation**:
+  - `validation_strategy` config option: `cv` (default), `temporal`, or `both`
+  - `temporal_split_column`, `temporal_split_date`, and `temporal_split_ratio` config options
+  - Group-aware temporal splitting to prevent data leakage
+  - `--validation-strategy` CLI override flag for the `run` command
+  - Temporal validation results section in HTML report
+- **Per-fold One-Hot Encoding**: OHE is now fitted inside each CV fold (train-only) instead of on the full dataset, preventing category leakage
+- **NaN-safe scaling** for KNN imputation: pre-scales features with NaN-tolerant statistics before distance-based imputation
+- `scale_pos_weight` parameter in XGBoost hyperparameter grid
+
+### Fixed
+- SVC models now set `probability=False` when external calibration is enabled, avoiding double Platt scaling
+- `TunedThresholdClassifierCV` (CV method) now uses `StratifiedGroupKFold` and passes group labels when grouped CV is configured
+- Repeated CV deduplication now uses the threshold-aware decision boundary instead of a fixed 0.5 cutoff
+- All `nanstd` calls now use `ddof=1` for unbiased sample standard deviation
+- Reliability curve binning replaced with self-contained implementation to ensure `bin_counts` alignment
+- Logger initialization deferred to after CLI overrides so log file uses the correct output folder
+- Feature importance name resolution improved with multi-source fallback; missing features across folds default to zero
+- `evaluate` command now reuses the saved OHE transformer from training instead of ad-hoc `pd.get_dummies`
+
+### Changed
+- `validate-config` summary table now displays validation strategy and temporal split parameters
+- `create-config` template now includes a commented `[Validation]` section
+- `uncertainty_margin` now stored in training metadata and model bundles
+
 ## [1.6.2] - 2026-03-05
 
 ### Fixed
@@ -32,13 +60,11 @@ All changes to ResPredAI are documented in this file.
   - Optional post-hoc probability calibration on the best estimator per outer CV fold
   - Supports `sigmoid` (Platt scaling) and `isotonic` calibration methods
   - Applied after hyper-parameters tuning and before threshold tuning
-
 - **Calibration Diagnostics**:
   - **Brier Score**: Mean squared error of probability predictions (lower is better)
   - **ECE (Expected Calibration Error)**: Weighted average of calibration error across bins
   - **MCE (Maximum Calibration Error)**: Maximum calibration error across any bin
   - **Reliability curves** (calibration plots) per outer CV fold and aggregate
-
 - **Repeated Stratified Cross-Validation**:
   - `outer_cv_repeats` config option (default: `1`)
   - Set `>1` for repeated CV with different shuffles for more robust performance estimates
@@ -136,9 +162,9 @@ All changes to ResPredAI are documented in this file.
   - `--seed` flag for reproducible SHAP computations
 
 ### Documentation
-- Added `docs/train-command.md`
-- Added `docs/evaluate-command.md`
-- Updated `docs/feature-importance-command.md` with SHAP fallback details
+- Added `docs/cli-reference/train-command.rst`
+- Added `docs/cli-reference/evaluate-command.rst`
+- Updated `docs/cli-reference/feature-importance-command.rst` with SHAP fallback details
 
 
 ## [1.2.0] - 2025-12-10
@@ -154,8 +180,8 @@ All changes to ResPredAI are documented in this file.
 - User-friendly error messages for missing config files or data paths
 
 ### Documentation
-- Added `docs/validate-config-command.md`
-- Updated `docs/run-command.md` with CLI overrides section
+- Added `docs/cli-reference/validate-config-command.rst`
+- Updated `docs/cli-reference/run-command.rst` with CLI overrides section
 
 
 ## [1.1.0] - 2025-12-04
@@ -176,7 +202,7 @@ All changes to ResPredAI are documented in this file.
 - Color scheme in feature importance plots
 
 ### Documentation
-- Added comprehensive command documentation (`docs/run-command.md`, `docs/create-config-command.md`, `docs/feature-importance-command.md`)
+- Added comprehensive command documentation (`docs/cli-reference/run-command.rst`, `docs/cli-reference/create-config-command.rst`, `docs/cli-reference/feature-importance-command.rst`)
 - Updated README with logo, quick start guide, and output structure
 - Add CHANGELOG.md
 

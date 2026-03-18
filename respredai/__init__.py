@@ -1,10 +1,9 @@
-"""
-ResPredAI - Antimicrobial Resistance Prediction via AI
+"""ResPredAI - Antimicrobial Resistance Prediction via AI.
 
 A machine learning pipeline for predicting antimicrobial resistance.
 """
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 
@@ -19,7 +18,12 @@ from respredai.core.metrics import (
     youden_j_score,
 )
 from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
-from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
+from respredai.core.workflow import (
+    perform_evaluation,
+    perform_pipeline,
+    perform_temporal_validation,
+    perform_training,
+)
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.confusion_matrix import save_cm
 from respredai.visualization.feature_importance import process_feature_importance
@@ -34,6 +38,7 @@ __all__ = [
     "perform_pipeline",
     "perform_training",
     "perform_evaluation",
+    "perform_temporal_validation",
     # Models
     "get_model_path",
     "save_models",

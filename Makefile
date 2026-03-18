@@ -65,6 +65,7 @@ clean:  ## Remove build artefacts and caches
 # Release
 
 publish: clean  ## Build and publish package to PyPI
+	@read -p "Publish to PyPI? [y/N] " ans && [ "$$ans" = "y" ]
 	@python -m build
 	@twine upload dist/*
 

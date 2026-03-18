@@ -584,3 +584,167 @@ class TestRepeatedCVConfig:
 
         with pytest.raises(ValueError, match="outer_cv_repeats must be >= 1"):
             ConfigHandler(str(config_path))
+
+
+class TestTemporalValidationConfig:
+    """Unit tests for temporal validation configuration."""
+
+    def _make_base_config(self, extra_sections=""):
+        """Create a base config string."""
+        return dedent(f"""
+        [Data]
+        data_path = foo.csv
+        targets = y
+        continuous_features = age
+
+        [Pipeline]
+        models = lr
+        outer_folds = 3
+        inner_folds = 2
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = out
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        {extra_sections}
+        """).strip()
+
+    def test_default_strategy_is_cv(self, tmp_path):
+        """Test that validation_strategy defaults to cv."""
+        config_text = self._make_base_config()
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation_strategy == "cv"
+        assert config.temporal_split_column is None
+        assert config.temporal_split_date is None
+        assert config.temporal_split_ratio is None
+
+    @pytest.mark.parametrize("strategy", ["cv", "temporal", "both"])
+    def test_valid_strategies(self, tmp_path, strategy):
+        """Test that all valid strategies are accepted."""
+        extra = f"[Validation]\nvalidation_strategy = {strategy}"
+        if strategy in ("temporal", "both"):
+            extra += "\ntemporal_split_column = date\ntemporal_split_date = 2023-01-01"
+        config_text = self._make_base_config(extra)
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation_strategy == strategy
+
+    def test_invalid_strategy_raises(self, tmp_path):
+        """Test that invalid validation_strategy raises ValueError."""
+        config_text = self._make_base_config("[Validation]\nvalidation_strategy = invalid")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="validation_strategy must be"):
+            ConfigHandler(str(config_path))
+
+    def test_temporal_missing_column_raises(self, tmp_path):
+        """Test that temporal strategy without temporal_split_column raises."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\ntemporal_split_date = 2023-01-01"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="temporal_split_column is required"):
+            ConfigHandler(str(config_path))
+
+    def test_temporal_both_date_and_ratio_raises(self, tmp_path):
+        """Test that setting both split_date and split_ratio raises."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\n"
+            "temporal_split_column = date\n"
+            "temporal_split_date = 2023-01-01\n"
+            "temporal_split_ratio = 0.8"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="Only one of"):
+            ConfigHandler(str(config_path))
+
+    def test_temporal_neither_date_nor_ratio_raises(self, tmp_path):
+        """Test that missing both split_date and split_ratio raises."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\ntemporal_split_column = date"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="Either temporal_split_date or"):
+            ConfigHandler(str(config_path))
+
+    def test_invalid_split_ratio_raises(self, tmp_path):
+        """Test that split_ratio outside (0, 1) raises."""
+        for ratio in ["0", "1", "1.5", "-0.1"]:
+            config_text = self._make_base_config(
+                f"[Validation]\nvalidation_strategy = temporal\n"
+                f"temporal_split_column = date\n"
+                f"temporal_split_ratio = {ratio}"
+            )
+            config_path = tmp_path / f"config_{ratio}.ini"
+            config_path.write_text(config_text)
+
+            with pytest.raises(ValueError, match="temporal_split_ratio must be"):
+                ConfigHandler(str(config_path))
+
+    def test_invalid_split_date_raises(self, tmp_path):
+        """Test that unparseable split_date raises."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\n"
+            "temporal_split_column = date\n"
+            "temporal_split_date = not-a-date"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        with pytest.raises(ValueError, match="is not a valid date"):
+            ConfigHandler(str(config_path))
+
+    def test_temporal_with_date(self, tmp_path):
+        """Test valid temporal config with split_date."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\n"
+            "temporal_split_column = collection_date\n"
+            "temporal_split_date = 2023-06-15"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation_strategy == "temporal"
+        assert config.temporal_split_column == "collection_date"
+        assert config.temporal_split_date == "2023-06-15"
+        assert config.temporal_split_ratio is None
+
+    def test_temporal_with_ratio(self, tmp_path):
+        """Test valid temporal config with split_ratio."""
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = temporal\n"
+            "temporal_split_column = date\n"
+            "temporal_split_ratio = 0.75"
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation_strategy == "temporal"
+        assert config.temporal_split_ratio == 0.75
+        assert config.temporal_split_date is None

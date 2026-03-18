@@ -1,14 +1,20 @@
 """Cross-validation utilities for ResPredAI."""
 
-from typing import Generator, Optional
+import logging
+import warnings
+from collections.abc import Generator
+from typing import Optional
 
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import (
     RepeatedStratifiedKFold,
     StratifiedGroupKFold,
     StratifiedKFold,
 )
 from sklearn.model_selection._split import BaseCrossValidator
+
+logger = logging.getLogger("respredai")
 
 
 class RepeatedStratifiedGroupKFold(BaseCrossValidator):
@@ -179,3 +185,98 @@ def get_outer_cv(
                 n_repeats=n_repeats,
                 random_state=random_state,
             )
+
+
+def get_temporal_split(
+    temporal_values: pd.Series,
+    split_date: Optional[str] = None,
+    split_ratio: Optional[float] = None,
+    groups: Optional[np.ndarray] = None,
+) -> tuple:
+    """
+    Split data by temporal column into train/test indices.
+
+    Parameters
+    ----------
+    temporal_values : pd.Series
+        Datetime series used for splitting.
+    split_date : str, optional
+        Cutoff date (ISO format). Train = dates < cutoff, test = dates >= cutoff.
+    split_ratio : float, optional
+        Fraction of data for training (by sorted date order).
+    groups : np.ndarray, optional
+        Group labels. When provided, entire groups are assigned to train or test
+        based on the group's latest date to prevent data leakage.
+
+    Returns
+    -------
+    tuple of (np.ndarray, np.ndarray)
+        (train_indices, test_indices) as integer arrays for iloc indexing.
+
+    Raises
+    ------
+    ValueError
+        If both or neither of split_date/split_ratio are provided,
+        or if the split produces an empty train or test set.
+    """
+    if (split_date is None) == (split_ratio is None):
+        raise ValueError("Exactly one of split_date or split_ratio must be provided")
+
+    temporal_values = pd.to_datetime(temporal_values)
+    n = len(temporal_values)
+
+    if split_date is not None:
+        cutoff = pd.to_datetime(split_date)
+    else:
+        # Determine cutoff from ratio: sort by date, take first ratio fraction as train
+        assert split_ratio is not None  # guaranteed by caller validation
+        sorted_dates = temporal_values.sort_values()
+        cutoff_idx = int(n * split_ratio)
+        cutoff_idx = max(1, min(cutoff_idx, n - 1))
+        cutoff = sorted_dates.iloc[cutoff_idx]
+
+    if groups is not None:
+        # Group-aware split: assign each group based on its latest date
+        groups = np.asarray(groups)
+        unique_groups = np.unique(groups)
+        train_groups = set()
+        test_groups = set()
+
+        for g in unique_groups:
+            group_mask = groups == g
+            max_date = temporal_values[group_mask].max()
+            # Groups with max_date == cutoff go to test set (strict past-only training)
+            if max_date < cutoff:
+                train_groups.add(g)
+            else:
+                test_groups.add(g)
+
+        train_idx = np.where(np.isin(groups, list(train_groups)))[0]
+        test_idx = np.where(np.isin(groups, list(test_groups)))[0]
+    else:
+        train_idx = np.where(temporal_values < cutoff)[0]
+        test_idx = np.where(temporal_values >= cutoff)[0]
+
+    if len(train_idx) == 0:
+        raise ValueError(
+            f"Temporal split produced an empty training set. "
+            f"Cutoff date: {cutoff}. Earliest date: {temporal_values.min()}"
+        )
+    if len(test_idx) == 0:
+        raise ValueError(
+            f"Temporal split produced an empty test set. "
+            f"Cutoff date: {cutoff}. Latest date: {temporal_values.max()}"
+        )
+
+    # Warn if split is very imbalanced
+    train_frac = len(train_idx) / n
+    if train_frac < 0.1 or train_frac > 0.9:
+        warnings.warn(
+            f"Temporal split is highly imbalanced: "
+            f"{len(train_idx)} train ({train_frac:.1%}) / "
+            f"{len(test_idx)} test ({1 - train_frac:.1%})",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return train_idx, test_idx

@@ -1,14 +1,24 @@
 """HTML report generation for ResPredAI results."""
 
 import base64
+import html as html_mod
+import logging
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from respredai import __version__
+
+logger = logging.getLogger("respredai")
+
+
+def _esc(value: object) -> str:
+    """HTML-escape a value for safe interpolation into HTML."""
+    return html_mod.escape(str(value))
 
 
 def _get_css_styles() -> str:
@@ -206,12 +216,12 @@ def _generate_header(config_handler: Any) -> str:
     <header>
         <h1>ResPredAI Analysis Report</h1>
         <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-        <p><strong>Data Source:</strong> {data_path}</p>
+        <p><strong>Data Source:</strong> {_esc(data_path)}</p>
     </header>
     """
 
 
-def _generate_toc(targets: List[str]) -> str:
+def _generate_toc(targets: list[str]) -> str:
     """Generate table of contents."""
     toc_items = [
         '<li><a href="#metadata">1. Run Metadata</a></li>',
@@ -221,7 +231,7 @@ def _generate_toc(targets: List[str]) -> str:
     ]
     for i, target in enumerate(targets, 1):
         safe_id = target.replace(" ", "_")
-        toc_items.append(f'<li><a href="#results-{safe_id}">3.{i}. {target}</a></li>')
+        toc_items.append(f'<li><a href="#results-{safe_id}">3.{i}. {_esc(target)}</a></li>')
     toc_items.extend(
         [
             "</ul></li>",
@@ -253,11 +263,11 @@ def _generate_metadata_section(config_handler: Any) -> str:
         <h2>1. Run Metadata</h2>
         <table class="config-table">
             <tr><th>Parameter</th><th>Value</th></tr>
-            <tr><td>Configuration File</td><td>{config_path}</td></tr>
-            <tr><td>Data Path</td><td>{data_path}</td></tr>
-            <tr><td>Output Folder</td><td>{out_folder}</td></tr>
-            <tr><td>Random Seed</td><td>{seed}</td></tr>
-            <tr><td>Parallel Jobs</td><td>{n_jobs}</td></tr>
+            <tr><td>Configuration File</td><td>{_esc(config_path)}</td></tr>
+            <tr><td>Data Path</td><td>{_esc(data_path)}</td></tr>
+            <tr><td>Output Folder</td><td>{_esc(out_folder)}</td></tr>
+            <tr><td>Random Seed</td><td>{_esc(seed)}</td></tr>
+            <tr><td>Parallel Jobs</td><td>{_esc(n_jobs)}</td></tr>
             <tr><td>Report Generated</td><td>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</td></tr>
             <tr><td>ResPredAI Version</td><td>{__version__}</td></tr>
         </table>
@@ -287,7 +297,6 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     models_str = ", ".join(models) if models else "N/A"
     targets_str = ", ".join(targets) if targets else "N/A"
 
-    # Get threshold objective settings
     threshold_objective = getattr(config_handler, "threshold_objective", "youden")
     vme_cost = getattr(config_handler, "vme_cost", 1.0)
     me_cost = getattr(config_handler, "me_cost", 1.0)
@@ -331,13 +340,13 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
         <h2>2. Framework Summary</h2>
         <table class="config-table">
             <tr><th>Setting</th><th>Value</th></tr>
-            <tr><td>Targets</td><td>{targets_str}</td></tr>
-            <tr><td>Models</td><td>{models_str}</td></tr>
-            <tr><td>Outer CV Folds</td><td>{outer_cv_details}</td></tr>
-            <tr><td>Inner CV Folds</td><td>{inner_folds}</td></tr>
-            <tr><td>Probability Calibration</td><td>{prob_calib_details}</td></tr>
-            <tr><td>Threshold Optimization</td><td>{threshold_details}</td></tr>
-            <tr><td>Missing Data Imputation</td><td>{imputation_details}</td></tr>
+            <tr><td>Targets</td><td>{_esc(targets_str)}</td></tr>
+            <tr><td>Models</td><td>{_esc(models_str)}</td></tr>
+            <tr><td>Outer CV Folds</td><td>{_esc(outer_cv_details)}</td></tr>
+            <tr><td>Inner CV Folds</td><td>{_esc(inner_folds)}</td></tr>
+            <tr><td>Probability Calibration</td><td>{_esc(prob_calib_details)}</td></tr>
+            <tr><td>Threshold Optimization</td><td>{_esc(threshold_details)}</td></tr>
+            <tr><td>Missing Data Imputation</td><td>{_esc(imputation_details)}</td></tr>
             <tr><td>Confidence Intervals</td><td>95% (1,000 bootstrap samples)</td></tr>
         </table>
     </section>
@@ -345,14 +354,14 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
 
 
 def _generate_results_section(
-    metrics_data: Dict, models: List[str], targets: List[str], output_path: Path
+    metrics_data: dict, models: list[str], targets: list[str], output_path: Path
 ) -> str:
     """Generate detailed results section with tables."""
     sections = ['<section id="results">', "<h2>3. Results</h2>"]
 
     for idx, target in enumerate(targets, 1):
         safe_id = target.replace(" ", "_")
-        sections.append(f'<h3 id="results-{safe_id}">3.{idx}. {target}</h3>')
+        sections.append(f'<h3 id="results-{safe_id}">3.{idx}. {_esc(target)}</h3>')
 
         # Build results table
         table_rows = []
@@ -376,7 +385,7 @@ def _generate_results_section(
 
             row = f"""
             <tr>
-                <td>{model}</td>
+                <td>{_esc(model)}</td>
                 <td class="metric-value">{fmt_val("AUROC_mean", "AUROC_ci_lower", "AUROC_ci_upper")}</td>
                 <td class="metric-value">{fmt_val("F1_weighted_mean", "F1_weighted_ci_lower", "F1_weighted_ci_upper")}</td>
                 <td class="metric-value">{fmt_val("MCC_mean", "MCC_ci_lower", "MCC_ci_upper")}</td>
@@ -414,7 +423,7 @@ def _generate_results_section(
 
 
 def _generate_confusion_matrices_section(
-    output_path: Path, models: List[str], targets: List[str]
+    output_path: Path, models: list[str], targets: list[str]
 ) -> str:
     """Generate confusion matrices section with responsive grid layout."""
     cm_dir = output_path / "confusion_matrices"
@@ -427,12 +436,12 @@ def _generate_confusion_matrices_section(
 
     found_any = False
     for model in models:
-        model_safe = model.replace(" ", "_")
-        sections.append(f"<h3>{model}</h3>")
+        model_safe = re.sub(r"[^\w.-]", "_", model)
+        sections.append(f"<h3>{_esc(model)}</h3>")
         sections.append('<div class="cm-grid">')
 
         for target in targets:
-            target_safe = target.replace(" ", "_")
+            target_safe = re.sub(r"[^\w.-]", "_", target)
             cm_path = cm_dir / f"Confusion_matrix_{model_safe}_{target_safe}.png"
 
             if cm_path.exists():
@@ -442,8 +451,8 @@ def _generate_confusion_matrices_section(
 
                 sections.append(f"""
                 <div class="cm-item">
-                    <img src="data:image/png;base64,{img_base64}" alt="Confusion Matrix - {model} - {target}">
-                    <p class="figure-caption">{target}</p>
+                    <img src="data:image/png;base64,{img_base64}" alt="Confusion Matrix - {_esc(model)} - {_esc(target)}">
+                    <p class="figure-caption">{_esc(target)}</p>
                 </div>
                 """)
 
@@ -457,7 +466,7 @@ def _generate_confusion_matrices_section(
 
 
 def _generate_calibration_section(
-    output_path: Path, metrics_data: Dict, models: List[str], targets: List[str]
+    output_path: Path, metrics_data: dict, models: list[str], targets: list[str]
 ) -> str:
     """Generate calibration diagnostics section with metrics and reliability curves."""
     sections = [
@@ -471,8 +480,8 @@ def _generate_calibration_section(
     calibration_dir = output_path / "calibration"
 
     for model in models:
-        model_safe = model.replace(" ", "_")
-        sections.append(f"<h3>{model}</h3>")
+        model_safe = re.sub(r"[^\w.-]", "_", model)
+        sections.append(f"<h3>{_esc(model)}</h3>")
 
         # Build calibration metrics table
         table_rows = []
@@ -496,7 +505,7 @@ def _generate_calibration_section(
 
             row = f"""
             <tr>
-                <td>{target}</td>
+                <td>{_esc(target)}</td>
                 <td class="metric-value">{fmt_calib("Brier_Score")}</td>
                 <td class="metric-value">{fmt_calib("ECE")}</td>
                 <td class="metric-value">{fmt_calib("MCE")}</td>
@@ -526,7 +535,7 @@ def _generate_calibration_section(
 
         found_curves = False
         for target in targets:
-            target_safe = target.replace(" ", "_")
+            target_safe = re.sub(r"[^\w.-]", "_", target)
             curve_path = calibration_dir / f"reliability_curve_{model_safe}_{target_safe}.png"
 
             if curve_path.exists():
@@ -537,8 +546,8 @@ def _generate_calibration_section(
                 sections.append(f"""
                 <div class="cm-item">
                     <img src="data:image/png;base64,{img_base64}"
-                         alt="Reliability Curve - {model} - {target}">
-                    <p class="figure-caption">{target}</p>
+                         alt="Reliability Curve - {_esc(model)} - {_esc(target)}">
+                    <p class="figure-caption">{_esc(target)}</p>
                 </div>
                 """)
 
@@ -563,16 +572,16 @@ def _generate_footer() -> str:
     """
 
 
-def _collect_metrics_data(output_path: Path, models: List[str], targets: List[str]) -> Dict:
+def _collect_metrics_data(output_path: Path, models: list[str], targets: list[str]) -> dict:
     """Collect all metrics data from CSV files."""
     metrics_data = {}
 
     for target in targets:
-        target_safe = target.replace(" ", "_")
+        target_safe = re.sub(r"[^\w.-]", "_", target)
         metrics_dir = output_path / "metrics" / target_safe
 
         for model in models:
-            model_safe = model.replace(" ", "_")
+            model_safe = re.sub(r"[^\w.-]", "_", model)
             metrics_file = metrics_dir / f"{model_safe}_metrics_detailed.csv"
 
             if metrics_file.exists():
@@ -582,24 +591,111 @@ def _collect_metrics_data(output_path: Path, models: List[str], targets: List[st
                     metrics_data[key] = {}
 
                     for _, row in df.iterrows():
-                        metric_name = (
-                            row["Metric"].replace(" ", "_").replace("(", "").replace(")", "")
-                        )
+                        metric_name = re.sub(r"[^\w]", "_", row["Metric"])
                         metrics_data[key][f"{metric_name}_mean"] = row["Mean"]
                         metrics_data[key][f"{metric_name}_std"] = row["Std"]
                         if "CI95_lower" in df.columns:
                             metrics_data[key][f"{metric_name}_ci_lower"] = row["CI95_lower"]
                             metrics_data[key][f"{metric_name}_ci_upper"] = row["CI95_upper"]
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to parse metrics file %s: %s", metrics_file, exc)
                     continue
 
     return metrics_data
 
 
+def _collect_temporal_metrics_data(
+    output_path: Path, models: list[str], targets: list[str]
+) -> dict:
+    """Collect temporal validation metrics data from CSV files."""
+    metrics_data = {}
+
+    for target in targets:
+        target_safe = re.sub(r"[^\w.-]", "_", target)
+        metrics_dir = output_path / "metrics" / target_safe
+
+        for model in models:
+            model_safe = re.sub(r"[^\w.-]", "_", model)
+            metrics_file = metrics_dir / f"{model_safe}_temporal_metrics.csv"
+
+            if metrics_file.exists():
+                try:
+                    df = pd.read_csv(metrics_file)
+                    key = f"{model}_{target}"
+                    metrics_data[key] = {}
+
+                    for _, row in df.iterrows():
+                        metric_name = re.sub(r"[^\w]", "_", row["Metric"])
+                        metrics_data[key][f"{metric_name}_mean"] = row["Mean"]
+                        if "CI95_lower" in df.columns:
+                            metrics_data[key][f"{metric_name}_ci_lower"] = row["CI95_lower"]
+                            metrics_data[key][f"{metric_name}_ci_upper"] = row["CI95_upper"]
+                except Exception as exc:
+                    logger.debug("Failed to parse metrics file %s: %s", metrics_file, exc)
+                    continue
+
+    return metrics_data
+
+
+def _generate_temporal_section(temporal_data: dict, models: list[str], targets: list[str]) -> str:
+    """Generate HTML section for temporal validation results."""
+    if not temporal_data:
+        return ""
+
+    html = ['<div class="section" id="temporal-validation">']
+    html.append("<h2>Temporal (Prospective-Style) Validation</h2>")
+    html.append(
+        "<p>Models were trained on historical data and evaluated on prospective data "
+        "using a temporal cutoff. This simulates real-world deployment conditions.</p>"
+    )
+
+    key_metrics = [
+        ("AUROC_mean", "AUROC"),
+        ("F1_weighted_mean", "F1 (weighted)"),
+        ("MCC_mean", "MCC"),
+        ("Balanced_Acc_mean", "Balanced Acc"),
+        ("Brier_Score_mean", "Brier Score"),
+    ]
+
+    for target in targets:
+        html.append(f"<h3>Target: {_esc(target)}</h3>")
+        html.append("<table><thead><tr><th>Model</th>")
+        for _, display_name in key_metrics:
+            html.append(f"<th>{_esc(display_name)}</th>")
+        html.append("</tr></thead><tbody>")
+
+        for model in models:
+            key = f"{model}_{target}"
+            if key not in temporal_data:
+                continue
+
+            data = temporal_data[key]
+            html.append(f"<tr><td><strong>{_esc(model)}</strong></td>")
+
+            for metric_key, _ in key_metrics:
+                val = data.get(metric_key)
+                if val is not None and not np.isnan(val):
+                    ci_lower = data.get(metric_key.replace("_mean", "_ci_lower"))
+                    ci_upper = data.get(metric_key.replace("_mean", "_ci_upper"))
+                    if ci_lower is not None and ci_upper is not None:
+                        html.append(f"<td>{val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}]</td>")
+                    else:
+                        html.append(f"<td>{val:.3f}</td>")
+                else:
+                    html.append("<td>-</td>")
+
+            html.append("</tr>")
+
+        html.append("</tbody></table>")
+
+    html.append("</div>")
+    return "\n".join(html)
+
+
 def generate_html_report(
     output_folder: str,
-    models: List[str],
-    targets: List[str],
+    models: list[str],
+    targets: list[str],
     config_handler: Any,
     output_filename: str = "report.html",
 ) -> Path:
@@ -628,6 +724,7 @@ def generate_html_report(
 
     # Collect all data
     metrics_data = _collect_metrics_data(output_path, models, targets)
+    temporal_data = _collect_temporal_metrics_data(output_path, models, targets)
 
     # Build HTML
     html_parts = [
@@ -645,6 +742,7 @@ def generate_html_report(
         _generate_metadata_section(config_handler),
         _generate_framework_summary_section(config_handler),
         _generate_results_section(metrics_data, models, targets, output_path),
+        _generate_temporal_section(temporal_data, models, targets),
         _generate_confusion_matrices_section(output_path, models, targets),
         _generate_calibration_section(output_path, metrics_data, models, targets),
         _generate_footer(),

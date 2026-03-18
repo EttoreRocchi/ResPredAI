@@ -115,6 +115,9 @@ n_jobs = -1
 enable = true
 compression = 3
 
+[Preprocessing]
+ohe_min_frequency = 0.05
+
 [Imputation]
 method = none
 strategy = mean
@@ -123,6 +126,13 @@ estimator = bayesian_ridge
 
 [Output]
 out_folder = ./output/
+
+# [Validation]
+# Validation strategy: cv (default), temporal (prospective-style), or both
+# validation_strategy = cv
+# temporal_split_column = collection_date  # Date column for temporal split
+# temporal_split_date = 2023-01-01  # Cutoff date (train < date, test >= date)
+# temporal_split_ratio = 0.8  # Alternative: fraction for training (by date order)
 ```
 
 ### 3. Run the pipeline
@@ -187,7 +197,7 @@ Available Models:
 │ Code       │ Name                     │
 ├────────────┼──────────────────────────┤
 │ LR         │ Logistic Regression      │
-│ MLP        │ Neural Network           │
+│ MLP        │ Multi-Layer Perceptron   │
 │ XGB        │ XGBoost                  │
 │ RF         │ Random Forest            │
 │ CatBoost   │ CatBoost                 │

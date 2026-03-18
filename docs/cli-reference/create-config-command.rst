@@ -65,6 +65,19 @@ The command creates a file with the following structure:
     # Number of parallel jobs (-1 uses all available cores)
     n_jobs = -1
 
+    # [Uncertainty]
+    # Margin around threshold for flagging uncertain predictions (0-0.5)
+    # margin = 0.1
+
+    [Preprocessing]
+    ohe_min_frequency = 0.05
+
+    # [Imputation]
+    # method = none  # none, simple, knn, or iterative
+    # strategy = mean  # For simple: mean, median, most_frequent
+    # n_neighbors = 5  # For knn
+    # estimator = bayesian_ridge  # For iterative: bayesian_ridge or random_forest
+
     [ModelSaving]
     # Enable model saving for resuming interrupted runs
     enable = true
@@ -73,6 +86,13 @@ The command creates a file with the following structure:
 
     [Output]
     out_folder = ./output/
+
+    # [Validation]
+    # Validation strategy: cv (default), temporal (prospective-style), or both
+    # validation_strategy = cv
+    # temporal_split_column = collection_date
+    # temporal_split_date = 2023-01-01
+    # temporal_split_ratio = 0.8
 
 Customization Steps
 -------------------
@@ -179,7 +199,7 @@ Use ``respredai list-models`` to see all available models.
 
   - ``true``: Apply CalibratedClassifierCV to calibrate predicted probabilities
   - ``false``: Use uncalibrated probabilities (default)
-  - Applied after Applied after hyper-parameters tuning and before threshold tuning
+  - Applied after hyper-parameters tuning and before threshold tuning
 
 - **probability_calibration_method**: Calibration method
 
@@ -192,6 +212,34 @@ Use ``respredai list-models`` to see all available models.
   - Must be at least 2
 
 **Note**: Calibration diagnostics (Brier Score, ECE, MCE, reliability curves) are always computed regardless of this setting.
+
+7. Configure Imputation (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    [Imputation]
+    method = none
+    strategy = mean
+    n_neighbors = 5
+    estimator = bayesian_ridge
+
+- **method**: Imputation method
+
+  - ``none``: No imputation (default, requires complete data)
+  - ``simple``: SimpleImputer from scikit-learn
+  - ``knn``: KNNImputer for k-nearest neighbors imputation
+  - ``iterative``: IterativeImputer (MissForest-style)
+
+- **strategy**: Strategy for SimpleImputer (only used when ``method = simple``)
+
+  - ``mean``, ``median``, or ``most_frequent``
+
+- **n_neighbors**: Number of neighbors for KNNImputer (only used when ``method = knn``, default: 5)
+
+- **estimator**: Estimator for IterativeImputer (only used when ``method = iterative``)
+
+  - ``bayesian_ridge`` (default) or ``random_forest``
 
 8. Configure Uncertainty Quantification (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -257,7 +305,7 @@ Use ``respredai list-models`` to see all available models.
     compression = 3
 
 - **enable**: Set to ``true`` to save models every folds
-- **compression**: 0-9 (0=no compression, 3=balanced, 9=maximum)
+- **compression**: 1-9 (1=minimal compression, 3=balanced, 9=maximum)
 
 12. Set Output Location
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -268,6 +316,39 @@ Use ``respredai list-models`` to see all available models.
     out_folder = ./results/
 
 The folder will be created if it doesn't exist.
+
+13. Configure Validation Strategy (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: ini
+
+    [Validation]
+    validation_strategy = cv
+    # temporal_split_column = collection_date
+    # temporal_split_date = 2023-01-01
+    # temporal_split_ratio = 0.8
+
+- **validation_strategy**: Validation approach (default: ``cv``)
+
+  - ``cv``: Standard nested cross-validation only
+  - ``temporal``: Temporal (prospective-style) validation only
+  - ``both``: Run both CV and temporal validation
+
+- **temporal_split_column**: Name of the date/time column for temporal splitting
+
+  - Required when ``validation_strategy`` is ``temporal`` or ``both``
+
+- **temporal_split_date**: Cutoff date in ISO format (e.g., ``2023-01-01``)
+
+  - Train set: dates before cutoff; test set: dates on or after cutoff
+  - Mutually exclusive with ``temporal_split_ratio``
+
+- **temporal_split_ratio**: Fraction of data for training by sorted date order
+
+  - Must be between 0 and 1 (exclusive)
+  - Mutually exclusive with ``temporal_split_date``
+
+**Note:** When ``group_column`` is configured, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
 
 See Also
 --------

@@ -12,7 +12,13 @@ import respredai
 
 
 def get_package_versions() -> dict:
-    """Get versions of key packages."""
+    """Get versions of key packages.
+
+    Returns
+    -------
+    dict
+        Mapping of package name to version string for installed dependencies.
+    """
     packages = {}
     # Mapping of package names to their import names
     pkg_map = {
@@ -34,7 +40,18 @@ def get_package_versions() -> dict:
 
 
 def hash_file(path: Path) -> str:
-    """Compute SHA256 hash of a file."""
+    """Compute SHA256 hash of a file.
+
+    Parameters
+    ----------
+    path : Path
+        Path to the file to hash.
+
+    Returns
+    -------
+    str
+        Hex-encoded SHA256 digest.
+    """
     sha256 = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):

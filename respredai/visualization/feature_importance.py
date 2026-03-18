@@ -2,7 +2,7 @@
 
 import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import joblib
 import matplotlib.pyplot as plt
@@ -57,7 +57,7 @@ def has_feature_importance(model) -> bool:
     return hasattr(inner_model, "feature_importances_") or hasattr(inner_model, "coef_")
 
 
-def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Series]:
+def get_feature_importance(model, feature_names: list[str]) -> Optional[pd.Series]:
     """
     Extract native feature importance or coefficients from a model.
 
@@ -87,7 +87,8 @@ def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Serie
     elif hasattr(inner_model, "coef_"):
         coef = inner_model.coef_
         if len(coef.shape) > 1:
-            coef = coef[0]
+            # For multi-class, average absolute coefficients across classes
+            coef = np.abs(coef).mean(axis=0)
         importances = coef
     else:
         return None
@@ -98,7 +99,7 @@ def get_feature_importance(model, feature_names: List[str]) -> Optional[pd.Serie
 def compute_shap_importance(
     model,
     X_test: np.ndarray,
-    feature_names: List[str],
+    feature_names: list[str],
     background_size: int = 100,
     seed: Optional[int] = None,
 ) -> Optional[pd.Series]:
@@ -127,9 +128,6 @@ def compute_shap_importance(
         return None
 
     try:
-        if seed is not None:
-            np.random.seed(seed)
-
         X_df = pd.DataFrame(X_test, columns=feature_names)
 
         if len(X_df) > background_size:
@@ -152,9 +150,52 @@ def compute_shap_importance(
         return None
 
 
+def _resolve_feature_names(
+    model, fold_test_data: list, fold_transformers: list, n_features: int
+) -> list[str]:
+    """
+    Resolve feature names from multiple sources, in priority order.
+
+    Checks: (1) outer model's feature_names_in_, (2) inner unwrapped model's
+    feature_names_in_, (3) model-specific attributes (e.g. CatBoost feature_names_),
+    (4) stored feature names in fold_test_data, (5) fold_transformers'
+    get_feature_names_out(), (6) generic feature_N fallback.
+    """
+    # 1. Check outer model (CalibratedClassifierCV preserves feature_names_in_)
+    if hasattr(model, "feature_names_in_"):
+        return list(model.feature_names_in_)
+
+    # 2. Check inner unwrapped model
+    inner_model = unwrap_calibrated_model(model)
+    if hasattr(inner_model, "feature_names_in_"):
+        return list(inner_model.feature_names_in_)
+
+    # 3. Check model-specific attributes (e.g. CatBoost's feature_names_)
+    if hasattr(inner_model, "feature_names_") and inner_model.feature_names_:
+        return list(inner_model.feature_names_)
+
+    # 4. Check stored feature names from fold_test_data
+    for test_data in fold_test_data:
+        if test_data is not None and len(test_data) == 2:
+            _, stored_names = test_data
+            if stored_names is not None and len(stored_names) > 0:
+                return list(stored_names)
+
+    # 5. Check fold_transformers for feature names
+    for transformer in fold_transformers:
+        if transformer is not None and hasattr(transformer, "get_feature_names_out"):
+            try:
+                return list(transformer.get_feature_names_out())
+            except Exception:
+                continue
+
+    # 6. Generic fallback
+    return [f"feature_{i}" for i in range(n_features)]
+
+
 def extract_feature_importance_from_models(
     model_path: Path, top_n: Optional[int] = None, use_shap: bool = True, seed: Optional[int] = None
-) -> Optional[Tuple[pd.DataFrame, List[str], str]]:
+) -> Optional[tuple[pd.DataFrame, list[str], str]]:
     """
     Extract feature importance from a saved model file.
 
@@ -182,6 +223,9 @@ def extract_feature_importance_from_models(
         return None
 
     try:
+        # Security note (CWE-502): joblib.load() deserialises pickle data and can
+        # execute arbitrary code.  Only load model files produced by this project
+        # from trusted sources.
         model_data = joblib.load(model_path)
     except Exception as e:
         warnings.warn(f"Failed to load model from {model_path}: {str(e)}")
@@ -189,6 +233,7 @@ def extract_feature_importance_from_models(
 
     fold_models = model_data.get("fold_models", [])
     fold_test_data = model_data.get("fold_test_data", [])
+    fold_transformers = model_data.get("fold_transformers", [])
 
     if not fold_models:
         warnings.warn(f"No models found in file: {model_path}")
@@ -200,17 +245,15 @@ def extract_feature_importance_from_models(
 
     # Try native feature importance first
     if has_feature_importance(first_model):
-        # Unwrap to get feature names from the underlying model
         inner_model = unwrap_calibrated_model(first_model)
-        if hasattr(inner_model, "feature_names_in_"):
-            feature_names = inner_model.feature_names_in_.tolist()
-        else:
-            n_features = (
-                inner_model.coef_.shape[1]
-                if hasattr(inner_model, "coef_")
-                else len(inner_model.feature_importances_)
-            )
-            feature_names = [f"feature_{i}" for i in range(n_features)]
+        n_features = (
+            inner_model.coef_.shape[1]
+            if hasattr(inner_model, "coef_")
+            else len(inner_model.feature_importances_)
+        )
+        feature_names = _resolve_feature_names(
+            first_model, fold_test_data, fold_transformers, n_features
+        )
 
         importances_list = []
         for model in fold_models:
@@ -220,7 +263,8 @@ def extract_feature_importance_from_models(
 
         if importances_list:
             importances_df = pd.DataFrame(importances_list)
-            mean_importance = importances_df.mean(axis=0)
+            # fillna(0): features absent in a fold contribute zero importance
+            mean_importance = importances_df.fillna(0).mean(axis=0)
             abs_mean_importance = mean_importance.abs().sort_values(ascending=False)
 
             if top_n is not None:
@@ -240,13 +284,10 @@ def extract_feature_importance_from_models(
             if model is None or test_data is None:
                 continue
 
-            X_test, _ = test_data
-            # Get feature names from model (unwrap if needed)
-            inner_model = unwrap_calibrated_model(model)
-            if hasattr(inner_model, "feature_names_in_"):
-                feat_names = list(inner_model.feature_names_in_)
-            else:
-                feat_names = [f"feature_{i}" for i in range(X_test.shape[1])]
+            X_test, stored_names = test_data
+            feat_names = _resolve_feature_names(
+                model, [test_data], fold_transformers, X_test.shape[1]
+            )
 
             if feature_names is None:
                 feature_names = feat_names
@@ -277,7 +318,7 @@ def plot_feature_importance(
     target_name: str,
     output_path: Path,
     top_n: int = 20,
-    figsize: Tuple[int, int] = (10, 8),
+    figsize: tuple[int, int] = (10, 8),
     method: str = "native",
 ):
     """
@@ -408,7 +449,7 @@ def process_feature_importance(
     save_csv: bool = True,
     use_shap: bool = True,
     seed: Optional[int] = None,
-) -> Optional[Tuple[pd.DataFrame, str]]:
+) -> Optional[tuple[pd.DataFrame, str]]:
     """
     Process feature importance for a model-target combination.
 

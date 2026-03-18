@@ -48,6 +48,9 @@ Open ``my_config.ini`` and customize it for your data:
     enable = true
     compression = 3
 
+    [Preprocessing]
+    ohe_min_frequency = 0.05
+
     [Imputation]
     method = none
     strategy = mean
@@ -56,6 +59,11 @@ Open ``my_config.ini`` and customize it for your data:
 
     [Output]
     out_folder = ./output/
+
+    # [Validation]
+    # validation_strategy = cv
+    # temporal_split_column = collection_date
+    # temporal_split_date = 2023-01-01
 
 Configuration Sections
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -78,10 +86,16 @@ Configuration Sections
      - Parallel processing settings
    * - ``[ModelSaving]``
      - Model persistence options
+   * - ``[Preprocessing]``
+     - Categorical encoding settings (e.g., ``ohe_min_frequency``)
    * - ``[Imputation]``
      - Missing data imputation settings
+   * - ``[Uncertainty]``
+     - Uncertainty quantification margin for near-threshold predictions
    * - ``[Output]``
      - Output directory path
+   * - ``[Validation]``
+     - Validation strategy (CV, temporal, or both)
 
 Step 3: Validate Configuration (Optional)
 -----------------------------------------

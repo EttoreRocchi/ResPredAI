@@ -49,6 +49,11 @@ Override configuration file parameters without editing the file:
 
   - Example: ``--seed 123``
 
+- ``--validation-strategy`` - Override validation strategy
+
+  - Values: ``cv``, ``temporal``, or ``both``
+  - Example: ``--validation-strategy temporal``
+
 **Examples with overrides:**
 
 .. code-block:: bash
@@ -61,6 +66,9 @@ Override configuration file parameters without editing the file:
 
     # Quick experiment with different seed
     respredai run --config my_config.ini --seed 42 --quiet
+
+    # Run with temporal validation
+    respredai run --config my_config.ini --validation-strategy temporal
 
 Configuration File
 ------------------
@@ -254,8 +262,8 @@ Enables saving trained models for resumption.
 
 - ``compression`` - Compression level for saved model files
 
-  - Range: 0-9
-  - ``0``: No compression (fastest, largest files)
+  - Range: 1-9
+  - ``1``: Minimal compression (fastest, largest files)
   - ``3``: Balanced compression (recommended)
   - ``9``: Maximum compression (slowest, smallest files)
 
@@ -312,6 +320,81 @@ Specifies output location.
 
   - Will be created if it doesn't exist
   - Contains all results, metrics, and saved models
+
+[Preprocessing] Section
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Controls categorical feature encoding.
+
+.. code-block:: ini
+
+    [Preprocessing]
+    ohe_min_frequency = 0.05
+
+**Parameters:**
+
+- ``ohe_min_frequency`` (optional) - Minimum frequency for categorical values in OneHotEncoder
+
+  - Categories appearing below this threshold are grouped into an "infrequent" category
+  - Values in (0, 1): proportion of samples (e.g., 0.05 = at least 5% of samples)
+  - Values >= 1: absolute count (e.g., 10 = at least 10 occurrences)
+  - Omit to disable (keep all categories)
+
+[Uncertainty] Section
+~~~~~~~~~~~~~~~~~~~~~
+
+Controls uncertainty quantification for predictions near the decision threshold.
+
+.. code-block:: ini
+
+    [Uncertainty]
+    margin = 0.1
+
+**Parameters:**
+
+- ``margin`` - Margin around the decision threshold for flagging uncertain predictions (default: ``0.1``)
+
+  - Range: 0 to 0.5 (exclusive)
+  - Predictions with probability within ``margin`` of the threshold are flagged as uncertain
+  - Uncertainty scores (0 = most certain, 1 = most uncertain) are included in evaluation output
+
+[Validation] Section
+~~~~~~~~~~~~~~~~~~~~
+
+Controls validation strategy (optional, defaults to standard cross-validation).
+
+.. code-block:: ini
+
+    [Validation]
+    validation_strategy = cv
+    # temporal_split_column = collection_date
+    # temporal_split_date = 2023-01-01
+    # temporal_split_ratio = 0.8
+
+**Parameters:**
+
+- ``validation_strategy`` - Validation approach (default: ``cv``)
+
+  - ``cv``: Standard nested cross-validation only
+  - ``temporal``: Temporal (prospective-style) validation only
+  - ``both``: Run both CV and temporal validation
+
+- ``temporal_split_column`` - Name of the date/time column for temporal splitting
+
+  - Required when ``validation_strategy`` is ``temporal`` or ``both``
+  - Values are parsed as dates
+
+- ``temporal_split_date`` - Cutoff date in ISO format (e.g., ``2023-01-01``)
+
+  - Train set: dates before cutoff; test set: dates on or after cutoff
+  - Mutually exclusive with ``temporal_split_ratio``
+
+- ``temporal_split_ratio`` - Fraction of data for training by sorted date order
+
+  - Must be between 0 and 1 (exclusive)
+  - Mutually exclusive with ``temporal_split_date``
+
+**Note:** When ``group_column`` is configured, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
 
 Pipeline Workflow
 -----------------
@@ -402,6 +485,10 @@ Each ``{Model}_{Target}_models.joblib`` file contains all data from the outer cr
 
 - **fold_models**: A list containing one trained model per outer CV fold
 - **fold_transformers**: A list containing one fitted transformer (scaler) per fold
+- **fold_ohe_transformers**: A list containing one fitted OneHotEncoder per fold
+- **fold_thresholds**: A list containing one calibrated threshold per fold
+- **fold_hyperparams**: A list containing the best hyperparameters per fold
+- **fold_test_data**: Optional list of (X_test_scaled, feature_names) tuples for SHAP computation
 - **metrics**: All metrics (precision, recall, F1, MCC, AUROC, confusion matrices) for every fold
 - **completed_folds**: Number of completed folds
 - **timestamp**: When the file was saved

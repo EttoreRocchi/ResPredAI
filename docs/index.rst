@@ -4,7 +4,7 @@ ResPredAI
 Antimicrobial Resistance Prediction via AI
 -------------------------------------------
 
-.. image:: https://img.shields.io/badge/python-3.9%2B-blue.svg
+.. image:: https://img.shields.io/badge/python-3.10%2B-blue.svg
    :target: https://www.python.org/downloads/
    :alt: Python Version
 
@@ -28,7 +28,7 @@ Features
 --------
 
 - **Nested Cross-Validation**: Rigorous evaluation with inner CV for hyperparameter tuning and outer CV for performance estimation
-- **8 ML Models**: Support for Logistic Regression, Random Forest, XGBoost, CatBoost, MLP, TabPFN, and SVM variants
+- **9 ML Models**: Support for Logistic Regression, Random Forest, XGBoost, CatBoost, MLP, TabPFN, KNN, and SVM variants
 - **Threshold Optimization**: Optional threshold tuning using Youden's J statistic, F1, F2, or cost-sensitive objectives
 - **Probability Calibration**: Post-hoc calibration with sigmoid (Platt) or isotonic methods
 - **Calibration Diagnostics**: Brier Score, ECE, MCE metrics with reliability curves
@@ -68,7 +68,7 @@ The pipeline generates:
     ├── confusion_matrices/                           # Confusion matrix heatmaps
     │   └── Confusion_matrix_{model}_{target}.png
     ├── calibration/                                  # Calibration diagnostics
-    │   └── {target}/{model}_reliability_curve.png
+    │   └── reliability_curve_{model}_{target}.png
     ├── feature_importance/                           # Feature importance (optional)
     │   └── {target}/{model}_feature_importance.csv
     ├── report.html                                   # Comprehensive HTML report

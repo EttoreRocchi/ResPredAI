@@ -1,7 +1,9 @@
 """Model I/O utilities for ResPredAI."""
 
+import re
 import warnings
 from pathlib import Path
+from typing import Optional
 
 import joblib
 import pandas as pd
@@ -24,12 +26,12 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
     all_summaries = []
 
     for target in targets:
-        target_safe = target.replace(" ", "_")
+        target_safe = re.sub(r"[^\w.-]", "_", target)
         target_dir = metrics_dir / target_safe
         target_rows = []
 
         for model in models:
-            model_safe = model.replace(" ", "_")
+            model_safe = re.sub(r"[^\w.-]", "_", model)
             metrics_file = target_dir / f"{model_safe}_metrics_detailed.csv"
 
             if not metrics_file.exists():
@@ -39,9 +41,7 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
             row = {"Model": model, "Target": target}
 
             for _, metric_row in df.iterrows():
-                metric_name = (
-                    metric_row["Metric"].replace(" ", "_").replace("(", "").replace(")", "")
-                )
+                metric_name = re.sub(r"[^\w]", "_", metric_row["Metric"])
                 mean_val = metric_row["Mean"]
                 std_val = metric_row["Std"]
                 row[metric_name] = f"{mean_val:.3f}±{std_val:.3f}"
@@ -85,8 +85,8 @@ def get_model_path(output_folder: str, model: str, target: str) -> Path:
     Path
         Path to the model file
     """
-    model_safe = model.replace(" ", "_")
-    target_safe = target.replace(" ", "_")
+    model_safe = re.sub(r"[^\w.-]", "_", model)
+    target_safe = re.sub(r"[^\w.-]", "_", target)
     models_dir = Path(output_folder) / "models"
     return models_dir / f"{model_safe}_{target_safe}_models.joblib"
 
@@ -94,13 +94,14 @@ def get_model_path(output_folder: str, model: str, target: str) -> Path:
 def save_models(
     fold_models: list,
     fold_transformers: list,
+    fold_ohe_transformers: list,
     fold_thresholds: list,
     fold_hyperparams: list,
     metrics: dict,
     completed_folds: int,
     model_path: Path,
     compression: int = 3,
-    fold_test_data: list = None,
+    fold_test_data: Optional[list] = None,
 ):
     """
     Save trained models with all fold data for feature importance (including SHAP).
@@ -111,6 +112,8 @@ def save_models(
         List of trained models (one per completed fold).
     fold_transformers : list
         List of fitted transformers (one per completed fold).
+    fold_ohe_transformers : list
+        List of fitted OHE transformers (one per completed fold).
     fold_thresholds : list
         List of calibrated thresholds (one per completed fold).
     fold_hyperparams : list
@@ -131,6 +134,7 @@ def save_models(
     model_data = {
         "fold_models": fold_models,
         "fold_transformers": fold_transformers,
+        "fold_ohe_transformers": fold_ohe_transformers,
         "fold_thresholds": fold_thresholds,
         "fold_hyperparams": fold_hyperparams,
         "metrics": metrics,
@@ -142,7 +146,7 @@ def save_models(
     joblib.dump(model_data, model_path, compress=compression)
 
 
-def load_models(model_path: Path) -> dict:
+def load_models(model_path: Path) -> dict | None:
     """
     Load trained models from file.
 

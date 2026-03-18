@@ -1,10 +1,10 @@
 """Parameter grids for hyperparameter tuning."""
 
-from typing import Dict, List, Union
+from typing import Union
 
 import numpy as np
 
-PARAM_GRID: Dict[str, Union[Dict, List[Dict]]] = {
+PARAM_GRID: dict[str, Union[dict, list[dict]]] = {
     "LR": [
         {
             "penalty": [None],
@@ -36,6 +36,7 @@ PARAM_GRID: Dict[str, Union[Dict, List[Dict]]] = {
         "subsample": [0.6, 0.8, 1.0],
         "colsample_bytree": [0.6, 0.8, 1.0],
         "gamma": [0, 0.1, 0.3],
+        "scale_pos_weight": [1, 3, 5, 10],
     },
     "RF": {
         "n_estimators": [50, 100, 200],

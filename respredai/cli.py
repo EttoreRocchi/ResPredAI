@@ -1,7 +1,7 @@
 """Command-line interface for ResPredAI."""
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -17,7 +17,12 @@ from rich.progress import (
 from rich.table import Table
 
 from respredai import __version__
-from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
+from respredai.core.workflow import (
+    perform_evaluation,
+    perform_pipeline,
+    perform_temporal_validation,
+    perform_training,
+)
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.feature_importance import process_feature_importance
 
@@ -70,6 +75,13 @@ def print_config_info(config_handler: ConfigHandler) -> None:
     table.add_row("Parallel Jobs", str(config_handler.n_jobs))
     table.add_row("Output Folder", str(config_handler.out_folder))
     table.add_row("Model Saving Enabled", str(config_handler.save_models_enable))
+    table.add_row("Validation Strategy", config_handler.validation_strategy.upper())
+    if config_handler.validation_strategy in ("temporal", "both"):
+        table.add_row("  Temporal Column", str(config_handler.temporal_split_column))
+        if config_handler.temporal_split_date:
+            table.add_row("  Temporal Split Date", config_handler.temporal_split_date)
+        if config_handler.temporal_split_ratio:
+            table.add_row("  Temporal Split Ratio", str(config_handler.temporal_split_ratio))
 
     console.print(table)
 
@@ -92,8 +104,7 @@ def callback(
         is_eager=True,
     ),
 ):
-    """
-    ResPredAI - Antimicrobial Resistance Prediction via AI
+    """Application callback for ResPredAI CLI.
 
     A machine learning pipeline for predicting antimicrobial resistance
     in Gram-negative bloodstream infections.
@@ -174,7 +185,7 @@ class TrainingProgressCallback:
         if progress is not None:
             self.progress.update(self.fold_task, completed=progress)
 
-    def complete_fold(self, fold_num: int, metrics: Dict[str, Any]) -> None:
+    def complete_fold(self, fold_num: int, metrics: dict[str, Any]) -> None:
         """Complete a fold and display metrics."""
         if self.quiet or not self.progress:
             return
@@ -191,14 +202,13 @@ class TrainingProgressCallback:
         if self.overall_task is not None:
             self.progress.advance(self.overall_task)
 
-        # Print fold metrics
         metrics_str = f"Fold {fold_num}: "
         metrics_str += f"F1={metrics.get('F1 (weighted)', 0):.3f}, "
         metrics_str += f"MCC={metrics.get('MCC', 0):.3f}, "
         metrics_str += f"AUROC={metrics.get('AUROC', 0):.3f}"
         self.console.print(f"    [dim]{metrics_str}[/dim]")
 
-    def complete_target(self, target_name: str, summary_metrics: Dict[str, Any]) -> None:
+    def complete_target(self, target_name: str, summary_metrics: dict[str, Any]) -> None:
         """Complete a target and display summary."""
         if self.quiet or not self.progress:
             return
@@ -207,7 +217,6 @@ class TrainingProgressCallback:
             self.progress.remove_task(self.target_task)
             self.target_task = None
 
-        # Print target summary
         self.console.print(f"\n  [bold green]✓[/bold green] Completed {target_name}")
         summary_str = "    "
         summary_str += f"F1={summary_metrics.get('F1 (weighted)', 0):.3f}±{summary_metrics.get('F1_std', 0):.3f}, "
@@ -248,7 +257,6 @@ class TrainingProgressCallback:
         if self.quiet or not self.progress:
             return
 
-        # Remove model task if it exists
         if self.model_task is not None:
             self.progress.remove_task(self.model_task)
             self.model_task = None
@@ -315,7 +323,7 @@ class SimpleTrainingProgressCallback:
 
         self.target_task = self.progress.add_task(f"[yellow]  Target: {target_name}", total=None)
 
-    def complete_target(self, target_name: str, info: Dict[str, Any]) -> None:
+    def complete_target(self, target_name: str, info: dict[str, Any]) -> None:
         """Complete a target."""
         if self.quiet or not self.progress:
             return
@@ -415,6 +423,28 @@ def _load_data_with_error_handling(config_handler: ConfigHandler) -> DataSetter:
         raise typer.Exit(code=1)
 
 
+def _apply_cli_overrides(
+    config_handler: ConfigHandler,
+    models: Optional[str],
+    targets: Optional[str],
+    output: Optional[Path],
+    seed: Optional[int],
+) -> None:
+    """Apply CLI option overrides to config_handler and print feedback."""
+    if models:
+        config_handler.models = [m.strip() for m in models.split(",")]
+        console.print(f"[dim]Override: models = {', '.join(config_handler.models)}[/dim]")
+    if targets:
+        config_handler.targets = [t.strip() for t in targets.split(",")]
+        console.print(f"[dim]Override: targets = {', '.join(config_handler.targets)}[/dim]")
+    if output:
+        config_handler.out_folder = str(output)
+        console.print(f"[dim]Override: output = {config_handler.out_folder}[/dim]")
+    if seed is not None:
+        config_handler.seed = seed
+        console.print(f"[dim]Override: seed = {config_handler.seed}[/dim]")
+
+
 @app.command(rich_help_panel="Configuration")
 def validate_config(
     config: Path = typer.Argument(
@@ -429,7 +459,6 @@ def validate_config(
     ),
 ):
     """Validate a configuration file without running the pipeline."""
-
     console.print(f"\n[bold cyan]Validating configuration: {config}[/bold cyan]\n")
 
     config_handler = _load_config_with_error_handling(config)
@@ -478,41 +507,45 @@ def run(
     ),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Override output folder"),
     seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Override random seed"),
+    validation_strategy: Optional[str] = typer.Option(
+        None,
+        "--validation-strategy",
+        help="Override validation strategy: cv, temporal, or both",
+    ),
 ):
-    """
-    Run the machine learning pipeline with the specified configuration.
+    """Run the machine learning pipeline with the specified configuration.
 
     Configuration options can be overridden via CLI flags without editing the file.
 
-    Example:
-        respredai run --config my_config.ini
-        respredai run --config my_config.ini --models LR,RF --output ./new_output/
-        respredai run --config my_config.ini --seed 123
+    Examples
+    --------
+    respredai run --config my_config.ini
+    respredai run --config my_config.ini --models LR,RF --output ./new_output/
+    respredai run --config my_config.ini --seed 123
+    respredai run --config my_config.ini --validation-strategy temporal
     """
     print_banner()
 
-    # Load configuration with error handling
     config_handler = _load_config_with_error_handling(config)
 
-    # Apply CLI overrides
-    if models:
-        config_handler.models = [m.strip() for m in models.split(",")]
-        console.print(f"[dim]Override: models = {', '.join(config_handler.models)}[/dim]")
-    if targets:
-        config_handler.targets = [t.strip() for t in targets.split(",")]
-        console.print(f"[dim]Override: targets = {', '.join(config_handler.targets)}[/dim]")
-    if output:
-        config_handler.out_folder = str(output)
-        console.print(f"[dim]Override: output = {config_handler.out_folder}[/dim]")
-    if seed is not None:
-        config_handler.seed = seed
-        console.print(f"[dim]Override: seed = {config_handler.seed}[/dim]")
+    _apply_cli_overrides(config_handler, models, targets, output, seed)
+    if validation_strategy is not None:
+        vs = validation_strategy.lower()
+        if vs not in ("cv", "temporal", "both"):
+            console.print(
+                "[bold red]Error:[/bold red] --validation-strategy must be cv, temporal, or both"
+            )
+            raise typer.Exit(code=1)
+        config_handler.validation_strategy = vs
+        console.print(f"[dim]Override: validation_strategy = {vs}[/dim]")
 
     if not quiet:
         console.print("\n[bold green]✓[/bold green] Configuration loaded successfully\n")
         print_config_info(config_handler)
 
-    # Load data with error handling
+    # Initialize logger after overrides so it uses the correct output folder
+    config_handler.initialize_logger()
+
     console.print("\n[bold cyan]Loading data...[/bold cyan]")
     datasetter = _load_data_with_error_handling(config_handler)
     console.print(
@@ -520,28 +553,44 @@ def run(
         f"{datasetter.X.shape[1]} features"
     )
 
-    # Create output directory
     Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
 
-    # Create progress callback
     progress_callback = TrainingProgressCallback(console, quiet)
 
-    # Run pipeline
-    console.print("\n[bold cyan]Starting model training pipeline...[/bold cyan]\n")
-    try:
-        perform_pipeline(
-            datasetter=datasetter,
-            models=config_handler.models,
-            config_handler=config_handler,
-            progress_callback=progress_callback,
-        )
-    except Exception as e:
-        console.print(f"\n[bold red]Pipeline Error:[/bold red] {str(e)}")
-        if not quiet:
-            console.print_exception()
-        raise typer.Exit(code=1)
+    strategy = config_handler.validation_strategy
 
-    # Success message
+    # Run CV pipeline (for "cv" or "both")
+    if strategy in ("cv", "both"):
+        console.print("\n[bold cyan]Starting model training pipeline...[/bold cyan]\n")
+        try:
+            perform_pipeline(
+                datasetter=datasetter,
+                models=config_handler.models,
+                config_handler=config_handler,
+                progress_callback=progress_callback,
+            )
+        except Exception as e:
+            console.print(f"\n[bold red]Pipeline Error:[/bold red] {str(e)}")
+            if not quiet:
+                console.print_exception()
+            raise typer.Exit(code=1)
+
+    # Run temporal validation (for "temporal" or "both")
+    if strategy in ("temporal", "both"):
+        console.print("\n[bold cyan]Starting temporal validation...[/bold cyan]\n")
+        try:
+            perform_temporal_validation(
+                datasetter=datasetter,
+                models=config_handler.models,
+                config_handler=config_handler,
+                progress_callback=progress_callback,
+            )
+        except Exception as e:
+            console.print(f"\n[bold red]Temporal Validation Error:[/bold red] {str(e)}")
+            if not quiet:
+                console.print_exception()
+            raise typer.Exit(code=1)
+
     success_panel = Panel(
         f"[bold green]✓ Pipeline completed successfully![/bold green]\n\n"
         f"Results saved to: [cyan]{config_handler.out_folder}[/cyan]",
@@ -569,37 +618,28 @@ def train(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Override output folder"),
     seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Override random seed"),
 ):
-    """
-    Train models on entire dataset using GridSearchCV for hyperparameter tuning.
+    """Train models on entire dataset using GridSearchCV for hyperparameter tuning.
 
     Saves one model file per model-target combination to trained_models/ directory.
     Use the 'evaluate' command to apply trained models to new data.
 
-    Example:
-        respredai train --config my_config.ini
-        respredai train --config my_config.ini --models LR,RF
+    Examples
+    --------
+    respredai train --config my_config.ini
+    respredai train --config my_config.ini --models LR,RF
     """
     print_banner()
 
     config_handler = _load_config_with_error_handling(config)
 
-    # Apply CLI overrides
-    if models:
-        config_handler.models = [m.strip() for m in models.split(",")]
-        console.print(f"[dim]Override: models = {', '.join(config_handler.models)}[/dim]")
-    if targets:
-        config_handler.targets = [t.strip() for t in targets.split(",")]
-        console.print(f"[dim]Override: targets = {', '.join(config_handler.targets)}[/dim]")
-    if output:
-        config_handler.out_folder = str(output)
-        console.print(f"[dim]Override: output = {config_handler.out_folder}[/dim]")
-    if seed is not None:
-        config_handler.seed = seed
-        console.print(f"[dim]Override: seed = {config_handler.seed}[/dim]")
+    _apply_cli_overrides(config_handler, models, targets, output, seed)
 
     if not quiet:
         console.print("\n[bold green]✓[/bold green] Configuration loaded successfully\n")
         print_config_info(config_handler)
+
+    # Initialize logger after overrides so it uses the correct output folder
+    config_handler.initialize_logger()
 
     console.print("\n[bold cyan]Loading data...[/bold cyan]")
     datasetter = _load_data_with_error_handling(config_handler)
@@ -659,14 +699,14 @@ def evaluate(
     ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
 ):
-    """
-    Evaluate trained models on new data with ground truth.
+    """Evaluate trained models on new data with ground truth.
 
     Requires models trained with 'train' command. New data must have the same
     features and target columns as training data.
 
-    Example:
-        respredai evaluate --models-dir ./output/trained_models --data new_data.csv --output ./eval_output
+    Examples
+    --------
+    respredai evaluate --models-dir ./output/trained_models --data new_data.csv --output ./eval_output
     """
     print_banner()
 
@@ -727,13 +767,12 @@ def evaluate(
 
 @app.command(rich_help_panel="Info")
 def list_models():
-    """
-    List all available machine learning models.
+    """List all available machine learning models.
 
-    Example:
-        respredai list-models
+    Examples
+    --------
+    respredai list-models
     """
-
     models_info = [
         ("LR", "Logistic Regression"),
         ("MLP", "Multi-Layer Perceptron"),
@@ -766,13 +805,12 @@ def create_config(
         ..., help="Path where the template configuration file will be created"
     ),
 ):
-    """
-    Create a template configuration file.
+    """Create a template configuration file.
 
-    Example:
-        respredai create-config my_config.ini
+    Examples
+    --------
+    respredai create-config my_config.ini
     """
-
     # Validate file extension
     if output_path.suffix.lower() != ".ini":
         console.print(
@@ -806,6 +844,10 @@ probability_calibration_method = sigmoid
 # CV folds for probability calibration (must be >= 2)
 probability_calibration_cv = 5
 
+# [Uncertainty]
+# Margin around threshold for flagging uncertain predictions (0-0.5)
+# margin = 0.1
+
 [Reproducibility]
 seed = 42
 
@@ -819,12 +861,25 @@ n_jobs = -1
 [Preprocessing]
 ohe_min_frequency = 0.05
 
+# [Imputation]
+# method = none  # none, simple, knn, or iterative
+# strategy = mean  # For simple: mean, median, most_frequent
+# n_neighbors = 5  # For knn
+# estimator = bayesian_ridge  # For iterative: bayesian_ridge or random_forest
+
 [Output]
 out_folder = ./output/
 
 [ModelSaving]
 enable = true
 compression = 3
+
+# [Validation]
+# Validation strategy: cv (default), temporal (prospective-style), or both
+# validation_strategy = cv
+# temporal_split_column = collection_date  # Date column for temporal split
+# temporal_split_date = 2023-01-01  # Cutoff date (train < date, test >= date)
+# temporal_split_ratio = 0.8  # Alternative: fraction for training (by date order)
 """
 
     try:
@@ -841,13 +896,12 @@ compression = 3
 
 @app.command(rich_help_panel="Info")
 def info():
-    """
-    Display information about ResPredAI.
+    """Display information about ResPredAI.
 
-    Example:
-        respredai info
+    Examples
+    --------
+    respredai info
     """
-
     info_text = f"""
     [bold cyan]ResPredAI v{__version__}[/bold cyan]
 
@@ -890,8 +944,7 @@ def feature_importance(
         None, "--seed", "-s", help="Random seed for SHAP reproducibility"
     ),
 ):
-    """
-    Extract and visualize feature importance/coefficients for a trained model.
+    """Extract and visualize feature importance/coefficients for a trained model.
 
     This command extracts feature importance or coefficients from all outer iterations
     and creates a barplot showing mean values with standard deviation as error bars.
@@ -904,8 +957,9 @@ def feature_importance(
     - XGB, RF, CatBoost: Uses feature importance (native)
     - MLP, RBF_SVC, TabPFN: Uses SHAP values (fallback)
 
-    Example:
-        respredai feature-importance --output ./output --model RF --target Target1 --top-n 30
+    Examples
+    --------
+    respredai feature-importance --output ./output --model RF --target Target1 --top-n 30
     """
     print_banner()
 
@@ -940,68 +994,8 @@ def feature_importance(
         method_label = "SHAP values" if method == "shap" else "native importance"
         console.print(f"[dim]Using {method_label}[/dim]\n")
 
-        # Display summary
-        mean_importance = result_df.mean(axis=0)
-        std_importance = result_df.std(axis=0)
-
-        # Select top N by ABSOLUTE value
-        abs_mean = mean_importance.abs()
-        top_feature_names = abs_mean.nlargest(top_n).index
-
-        # Get signed values for display
-        top_mean = mean_importance[top_feature_names]
-        top_std = std_importance[top_feature_names]
-
-        method_suffix = " (SHAP)" if method == "shap" else ""
-        table = Table(
-            title=f"Top {top_n} Features{method_suffix}: {model} - {target}",
-            show_header=True,
-            header_style="bold magenta",
-        )
-        table.add_column("Rank", style="cyan", width=6)
-        table.add_column("Feature", style="green")
-        importance_col = "Mean |SHAP|" if method == "shap" else "Importance"
-        table.add_column(importance_col, style="yellow", justify="right")
-
-        for rank, feature in enumerate(top_feature_names, 1):
-            importance = top_mean[feature]
-            std = top_std[feature]
-            table.add_row(str(rank), feature, f"{importance:.4f} ± {std:.4f}")
-
-        console.print("\n")
-        console.print(table)
-
-        # Show output paths
-        model_safe = model.replace(" ", "_")
-        target_safe = target.replace(" ", "_")
-        suffix = "_shap" if method == "shap" else ""
-
-        output_messages = []
-        if not no_csv:
-            csv_path = (
-                output_folder
-                / "feature_importance"
-                / target_safe
-                / f"{model_safe}_feature_importance{suffix}.csv"
-            )
-            output_messages.append(f"CSV: [cyan]{csv_path}[/cyan]")
-        if not no_plot:
-            plot_path = (
-                output_folder
-                / "feature_importance"
-                / target_safe
-                / f"{model_safe}_feature_importance{suffix}.png"
-            )
-            output_messages.append(f"Plot: [cyan]{plot_path}[/cyan]")
-
-        if output_messages:
-            success_text = (
-                "[bold green]✓ Feature importance extracted successfully![/bold green]\n\n"
-            )
-            success_text += "Output files:\n" + "\n".join(f"  • {msg}" for msg in output_messages)
-
-            success_panel = Panel(success_text, title="Success", border_style="green")
-            console.print("\n", success_panel)
+        _display_feature_table(result_df, model, target, top_n, method)
+        _show_output_paths(output_folder, model, target, method, no_csv, no_plot)
 
     except Exception as e:
         console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
@@ -1009,8 +1003,82 @@ def feature_importance(
         raise typer.Exit(code=1)
 
 
+def _display_feature_table(
+    result_df: Any,
+    model: str,
+    target: str,
+    top_n: int,
+    method: str,
+) -> None:
+    """Build and print a Rich table of top feature importances."""
+    mean_importance = result_df.mean(axis=0)
+    std_importance = result_df.std(axis=0)
+
+    abs_mean = mean_importance.abs()
+    top_feature_names = abs_mean.nlargest(top_n).index
+    top_mean = mean_importance[top_feature_names]
+    top_std = std_importance[top_feature_names]
+
+    method_suffix = " (SHAP)" if method == "shap" else ""
+    table = Table(
+        title=f"Top {top_n} Features{method_suffix}: {model} - {target}",
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Rank", style="cyan", width=6)
+    table.add_column("Feature", style="green")
+    importance_col = "Mean |SHAP|" if method == "shap" else "Importance"
+    table.add_column(importance_col, style="yellow", justify="right")
+
+    for rank, feature in enumerate(top_feature_names, 1):
+        table.add_row(str(rank), feature, f"{top_mean[feature]:.4f} ± {top_std[feature]:.4f}")
+
+    console.print("\n")
+    console.print(table)
+
+
+def _show_output_paths(
+    output_folder: Path,
+    model: str,
+    target: str,
+    method: str,
+    no_csv: bool,
+    no_plot: bool,
+) -> None:
+    """Print the output file paths for feature importance results."""
+    import re
+
+    model_safe = re.sub(r"[^\w.-]", "_", model)
+    target_safe = re.sub(r"[^\w.-]", "_", target)
+    suffix = "_shap" if method == "shap" else ""
+
+    output_messages = []
+    if not no_csv:
+        csv_path = (
+            output_folder
+            / "feature_importance"
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}.csv"
+        )
+        output_messages.append(f"CSV: [cyan]{csv_path}[/cyan]")
+    if not no_plot:
+        plot_path = (
+            output_folder
+            / "feature_importance"
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}.png"
+        )
+        output_messages.append(f"Plot: [cyan]{plot_path}[/cyan]")
+
+    if output_messages:
+        success_text = "[bold green]✓ Feature importance extracted successfully![/bold green]\n\n"
+        success_text += "Output files:\n" + "\n".join(f"  • {msg}" for msg in output_messages)
+        success_panel = Panel(success_text, title="Success", border_style="green")
+        console.print("\n", success_panel)
+
+
 def main():
-    """Main entry point for the CLI."""
+    """Run the CLI application."""
     app()
 
 

@@ -1,9 +1,12 @@
 """Pipeline creation for different machine learning models."""
 
-from typing import List, Literal, Tuple
+import logging
+from typing import Literal
 
+import numpy as np
 import torch
 from catboost import CatBoostClassifier
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
@@ -20,6 +23,38 @@ from tabpfn.constants import ModelVersion
 from xgboost import XGBClassifier
 
 from respredai.core.params import PARAM_GRID
+
+
+class _NaNSafeScaler(BaseEstimator, TransformerMixin):
+    """StandardScaler that tolerates NaN values.
+
+    Computes mean/std from non-NaN values during fit, and applies z-score
+    normalization while preserving NaN positions. This enables distance-based
+    imputers (e.g. KNNImputer) to operate on scale-normalized features,
+    preventing features with larger magnitudes from dominating distances.
+    """
+
+    def fit(self, X, y=None):
+        X_arr = np.asarray(X, dtype=np.float64)
+        self.mean_ = np.nanmean(X_arr, axis=0)
+        self.scale_ = np.nanstd(X_arr, axis=0)
+        # Handle all-NaN columns (nanstd/nanmean return NaN)
+        self.mean_[np.isnan(self.mean_)] = 0.0
+        self.scale_[np.isnan(self.scale_)] = 1.0
+        # Avoid division by zero for constant features
+        self.scale_[self.scale_ == 0] = 1.0
+        self.n_features_in_ = X_arr.shape[1]
+        return self
+
+    def transform(self, X):
+        X_arr = np.asarray(X, dtype=np.float64)
+        return (X_arr - self.mean_) / self.scale_
+
+    def get_feature_names_out(self, input_features=None):
+        """Support sklearn set_output API."""
+        if input_features is not None:
+            return np.array(input_features)
+        return np.array([f"x{i}" for i in range(self.n_features_in_)])
 
 
 def get_imputer(
@@ -66,11 +101,107 @@ def get_imputer(
         raise ValueError(f"Unknown imputation method: {method}")
 
 
+def _create_classifier(
+    model_name: str,
+    rnd_state: int,
+    calibrate_probabilities: bool = False,
+):
+    """Instantiate the classifier for the given model name.
+
+    Parameters
+    ----------
+    model_name : str
+        One of LR, XGB, RF, MLP, CatBoost, TabPFN, RBF_SVC, Linear_SVC, KNN.
+    rnd_state : int
+        Random state for reproducibility.
+    calibrate_probabilities : bool
+        When True, SVC models disable internal Platt scaling to avoid
+        double calibration with external CalibratedClassifierCV.
+    """
+    if model_name == "LR":
+        return LogisticRegression(
+            solver="saga",
+            max_iter=5000,
+            random_state=rnd_state,
+            class_weight="balanced",
+            n_jobs=1,
+        )
+    elif model_name == "XGB":
+        return XGBClassifier(
+            importance_type="gain",
+            random_state=rnd_state,
+            enable_categorical=True,
+            n_jobs=1,
+        )
+    # Note: MLP, KNN, and TabPFN do not support native class weight balancing.
+    # They rely on AUROC optimization in GridSearchCV and optional threshold
+    # calibration to handle class imbalance.
+    elif model_name == "MLP":
+        return MLPClassifier(
+            solver="adam",
+            learning_rate="adaptive",
+            learning_rate_init=0.001,
+            max_iter=5000,
+            shuffle=True,
+            random_state=rnd_state,
+        )
+    elif model_name == "RF":
+        return RandomForestClassifier(
+            random_state=rnd_state,
+            class_weight="balanced",
+            n_jobs=1,
+        )
+    elif model_name == "CatBoost":
+        return CatBoostClassifier(
+            random_state=rnd_state,
+            verbose=False,
+            allow_writing_files=False,
+            thread_count=1,
+            auto_class_weights="Balanced",
+        )
+    elif model_name == "TabPFN":
+        if not torch.cuda.is_available():
+            logging.getLogger("respredai").warning("CUDA not available; TabPFN will use CPU.")
+        return TabPFNClassifier().create_default_for_version(
+            version=ModelVersion.V2,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            n_estimators=8,
+            random_state=rnd_state,
+        )
+    elif model_name == "RBF_SVC":
+        # When external probability calibration is enabled, disable SVC's
+        # internal Platt scaling to avoid double calibration.
+        # CalibratedClassifierCV can calibrate from the decision function.
+        return SVC(
+            kernel="rbf",
+            random_state=rnd_state,
+            class_weight="balanced",
+            probability=not calibrate_probabilities,
+        )
+    elif model_name == "Linear_SVC":
+        return SVC(
+            kernel="linear",
+            random_state=rnd_state,
+            class_weight="balanced",
+            probability=not calibrate_probabilities,
+        )
+    elif model_name == "KNN":
+        return KNeighborsClassifier(
+            metric="euclidean",
+            n_jobs=1,
+        )
+    else:
+        raise ValueError(
+            f"Possible models are 'LR', 'XGB', 'RF', 'MLP', 'CatBoost', 'TabPFN', "
+            f"'RBF_SVC', 'Linear_SVC', and 'KNN'. {model_name} was passed instead."
+        )
+
+
 def get_pipeline(
     model_name: Literal[
         "LR", "XGB", "RF", "MLP", "CatBoost", "TabPFN", "RBF_SVC", "Linear_SVC", "KNN"
     ],
-    continuous_cols: List[str],
+    continuous_cols: list[str],
     inner_folds: int,
     n_jobs: int,
     rnd_state: int,
@@ -79,7 +210,8 @@ def get_pipeline(
     imputation_strategy: str = "mean",
     imputation_n_neighbors: int = 5,
     imputation_estimator: str = "bayesian_ridge",
-) -> Tuple[ColumnTransformer, GridSearchCV]:
+    calibrate_probabilities: bool = False,
+) -> tuple[ColumnTransformer, GridSearchCV]:
     """Get the sklearn pipeline with transformer and grid search.
 
     Parameters
@@ -104,22 +236,26 @@ def get_pipeline(
         Number of neighbors for KNNImputer
     imputation_estimator : str, optional
         Estimator for IterativeImputer (bayesian_ridge, random_forest)
+    calibrate_probabilities : bool, optional
+        Whether external probability calibration (CalibratedClassifierCV) will
+        be applied. When True, SVC models are created with probability=False to
+        avoid double calibration (SVC's internal Platt scaling + external
+        calibration). CalibratedClassifierCV can calibrate directly from the
+        decision function.
 
     Returns
     -------
     transformer : ColumnTransformer
         The transformer for scaling continuous features
     grid : GridSearchCV
-        The grid search object with the model
+        The grid search object with the model.
     """
-
     # Use StratifiedGroupKFold if groups are specified, otherwise StratifiedKFold
     if use_groups:
         inner_cv = StratifiedGroupKFold(n_splits=inner_folds, shuffle=True, random_state=rnd_state)
     else:
         inner_cv = StratifiedKFold(n_splits=inner_folds, shuffle=True, random_state=rnd_state)
 
-    # Get imputer if imputation is enabled
     imputer = get_imputer(
         method=imputation_method,
         strategy=imputation_strategy,
@@ -130,16 +266,28 @@ def get_pipeline(
 
     # Build transformer with optional imputation
     if imputer is not None:
-        # Create pipeline: impute then scale for continuous columns
+        # For distance-based imputers (KNN), pre-scale features so that
+        # Euclidean distances are not dominated by high-magnitude features.
+        if imputation_method == "knn":
+            steps = [
+                ("pre_scaler", _NaNSafeScaler()),
+                ("imputer", imputer),
+                ("scaler", StandardScaler()),
+            ]
+        else:
+            steps = [("imputer", imputer), ("scaler", StandardScaler())]
+        # When imputation is enabled, also impute categorical columns with
+        # most-frequent strategy to prevent NaN propagation downstream.
+        categorical_imputer = SimpleImputer(strategy="most_frequent")
         transformer = ColumnTransformer(
             transformers=[
                 (
                     "continuous",
-                    Pipeline([("imputer", imputer), ("scaler", StandardScaler())]),
+                    Pipeline(steps),
                     continuous_cols,
                 )
             ],
-            remainder="passthrough",
+            remainder=categorical_imputer,
             verbose_feature_names_out=False,
         ).set_output(transform="pandas")
     else:
@@ -150,75 +298,7 @@ def get_pipeline(
             verbose_feature_names_out=False,
         ).set_output(transform="pandas")
 
-    if model_name == "LR":
-        classifier = LogisticRegression(
-            solver="saga",
-            max_iter=5000,
-            random_state=rnd_state,
-            class_weight="balanced",
-            n_jobs=1,
-        )
-    elif model_name == "XGB":
-        classifier = XGBClassifier(
-            importance_type="gain",
-            random_state=rnd_state,
-            enable_categorical=True,
-            n_jobs=1,
-        )
-    elif model_name == "MLP":
-        classifier = MLPClassifier(
-            solver="adam",
-            learning_rate="adaptive",
-            learning_rate_init=0.001,
-            max_iter=5000,
-            shuffle=True,
-            random_state=rnd_state,
-        )
-    elif model_name == "RF":
-        classifier = RandomForestClassifier(
-            random_state=rnd_state,
-            class_weight="balanced",
-            n_jobs=1,
-        )
-    elif model_name == "CatBoost":
-        classifier = CatBoostClassifier(
-            random_state=rnd_state,
-            verbose=False,
-            allow_writing_files=False,
-            thread_count=1,
-            auto_class_weights="Balanced",
-        )
-    elif model_name == "TabPFN":
-        classifier = TabPFNClassifier().create_default_for_version(
-            version=ModelVersion.V2,
-            device="cuda" if torch.cuda.is_available() else "cpu",
-            n_estimators=8,
-            random_state=rnd_state,
-        )
-    elif model_name == "RBF_SVC":
-        classifier = SVC(
-            kernel="rbf",
-            random_state=rnd_state,
-            class_weight="balanced",
-            probability=True,
-        )
-    elif model_name == "Linear_SVC":
-        classifier = SVC(
-            kernel="linear",
-            random_state=rnd_state,
-            class_weight="balanced",
-            probability=True,
-        )
-    elif model_name == "KNN":
-        classifier = KNeighborsClassifier(
-            metric="euclidean",
-            n_jobs=1,
-        )
-    else:
-        raise ValueError(
-            f"Possible models are 'LR', 'XGB', 'RF', 'MLP', 'CatBoost', 'TabPFN', "
-            f"'RBF_SVC', 'Linear_SVC', and 'KNN'. {model_name} was passed instead."
-        )
+    classifier = _create_classifier(model_name, rnd_state, calibrate_probabilities)
 
     return transformer, GridSearchCV(
         estimator=classifier,

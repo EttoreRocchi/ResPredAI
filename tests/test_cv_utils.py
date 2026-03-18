@@ -1,6 +1,7 @@
 """Unit tests for CV utilities module."""
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.model_selection import (
     RepeatedStratifiedKFold,
@@ -8,7 +9,7 @@ from sklearn.model_selection import (
     StratifiedKFold,
 )
 
-from respredai.core.cv_utils import RepeatedStratifiedGroupKFold, get_outer_cv
+from respredai.core.cv_utils import RepeatedStratifiedGroupKFold, get_outer_cv, get_temporal_split
 
 
 class TestRepeatedStratifiedGroupKFold:
@@ -160,3 +161,89 @@ class TestGetOuterCV:
 
         assert len(splits_standard) == 5
         assert len(splits_repeated) == 15
+
+
+class TestGetTemporalSplit:
+    """Unit tests for get_temporal_split function."""
+
+    def test_split_by_date(self):
+        """Split with a date cutoff produces correct indices."""
+        dates = pd.Series(pd.to_datetime(["2022-01", "2022-06", "2023-01", "2023-06"]))
+        train_idx, test_idx = get_temporal_split(dates, split_date="2023-01-01")
+
+        np.testing.assert_array_equal(sorted(train_idx), [0, 1])
+        np.testing.assert_array_equal(sorted(test_idx), [2, 3])
+
+    def test_split_by_ratio(self):
+        """Split with a ratio produces correct proportions."""
+        dates = pd.Series(pd.to_datetime([f"2020-{i:02d}-01" for i in range(1, 11)]))
+        train_idx, test_idx = get_temporal_split(dates, split_ratio=0.5)
+
+        assert len(train_idx) > 0
+        assert len(test_idx) > 0
+        assert len(train_idx) + len(test_idx) == 10
+
+    def test_group_aware_split(self):
+        """Groups spanning the boundary are assigned to test."""
+        dates = pd.Series(pd.to_datetime(["2022-01", "2022-06", "2023-06", "2022-03"]))
+        # Group 0: samples 0, 3 (dates 2022-01, 2022-03) -> all before cutoff -> train
+        # Group 1: samples 1, 2 (dates 2022-06, 2023-06) -> max date is after cutoff -> test
+        groups = np.array([0, 1, 1, 0])
+
+        train_idx, test_idx = get_temporal_split(dates, split_date="2023-01-01", groups=groups)
+
+        # Group 0 (samples 0, 3) should be in train
+        assert 0 in train_idx
+        assert 3 in train_idx
+        # Group 1 (samples 1, 2) should be in test (max date 2023-06 >= cutoff)
+        assert 1 in test_idx
+        assert 2 in test_idx
+
+    def test_empty_train_raises(self):
+        """Split that produces empty train set raises ValueError."""
+        dates = pd.Series(pd.to_datetime(["2023-01", "2023-06"]))
+
+        with pytest.raises(ValueError, match="empty training set"):
+            get_temporal_split(dates, split_date="2020-01-01")
+
+    def test_empty_test_raises(self):
+        """Split that produces empty test set raises ValueError."""
+        dates = pd.Series(pd.to_datetime(["2020-01", "2020-06"]))
+
+        with pytest.raises(ValueError, match="empty test set"):
+            get_temporal_split(dates, split_date="2025-01-01")
+
+    def test_both_date_and_ratio_raises(self):
+        """Providing both split_date and split_ratio raises ValueError."""
+        dates = pd.Series(pd.to_datetime(["2022-01", "2023-01"]))
+
+        with pytest.raises(ValueError, match="Exactly one"):
+            get_temporal_split(dates, split_date="2022-06-01", split_ratio=0.5)
+
+    def test_neither_date_nor_ratio_raises(self):
+        """Providing neither split_date nor split_ratio raises ValueError."""
+        dates = pd.Series(pd.to_datetime(["2022-01", "2023-01"]))
+
+        with pytest.raises(ValueError, match="Exactly one"):
+            get_temporal_split(dates)
+
+    def test_imbalanced_split_warns(self):
+        """Highly imbalanced split produces a warning."""
+        # 20 dates, cutoff after 1st -> 1 train / 19 test = 5% train
+        dates = pd.Series(
+            pd.to_datetime(
+                [f"2020-{i:02d}-01" for i in range(1, 13)]
+                + [f"2021-{i:02d}-01" for i in range(1, 9)]
+            )
+        )
+
+        with pytest.warns(UserWarning, match="highly imbalanced"):
+            get_temporal_split(dates, split_date="2020-02-01")
+
+    def test_returns_numpy_arrays(self):
+        """Returned indices are numpy arrays."""
+        dates = pd.Series(pd.to_datetime(["2022-01", "2022-06", "2023-01", "2023-06"]))
+        train_idx, test_idx = get_temporal_split(dates, split_date="2023-01-01")
+
+        assert isinstance(train_idx, np.ndarray)
+        assert isinstance(test_idx, np.ndarray)
