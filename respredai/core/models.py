@@ -41,7 +41,7 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
             row = {"Model": model, "Target": target}
 
             for _, metric_row in df.iterrows():
-                metric_name = re.sub(r"[^\w]", "_", metric_row["Metric"])
+                metric_name = re.sub(r"[^\w]", "_", re.sub(r"[()]", "", metric_row["Metric"]))
                 mean_val = metric_row["Mean"]
                 std_val = metric_row["Std"]
                 row[metric_name] = f"{mean_val:.3f}±{std_val:.3f}"
