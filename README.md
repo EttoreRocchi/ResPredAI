@@ -96,6 +96,10 @@ threshold_objective = youden
 # Cost weights for cost_sensitive objective (VME = false susceptible, ME = false resistant)
 vme_cost = 1.0
 me_cost = 1.0
+# Confidence level for bootstrap CIs (between 0.5 and 1.0, default: 0.95)
+confidence_level = 0.95
+# Number of bootstrap resamples for CIs (>= 100, default: 1000)
+n_bootstrap = 1000
 
 [Uncertainty]
 # Margin around threshold for flagging uncertain predictions (0-0.5)
