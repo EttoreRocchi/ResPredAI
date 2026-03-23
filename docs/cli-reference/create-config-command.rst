@@ -52,6 +52,8 @@ The command creates a file with the following structure:
     calibrate_probabilities = false
     probability_calibration_method = sigmoid
     probability_calibration_cv = 5
+    # confidence_level = 0.95
+    # n_bootstrap = 1000
 
     [Reproducibility]
     seed = 42
@@ -194,6 +196,8 @@ Use ``respredai list-models`` to see all available models.
     calibrate_probabilities = true
     probability_calibration_method = sigmoid
     probability_calibration_cv = 5
+    confidence_level = 0.95
+    n_bootstrap = 1000
 
 - **calibrate_probabilities**: Enable post-hoc probability calibration
 
@@ -210,6 +214,14 @@ Use ``respredai list-models`` to see all available models.
 
   - Internal cross-validation used by CalibratedClassifierCV
   - Must be at least 2
+
+- **confidence_level**: Confidence level for bootstrap CIs (default: 0.95)
+
+  - Must be between 0.5 and 1.0
+
+- **n_bootstrap**: Number of bootstrap resamples for CIs (default: 1000)
+
+  - Must be at least 100
 
 **Note**: Calibration diagnostics (Brier Score, ECE, MCE, reliability curves) are always computed regardless of this setting.
 

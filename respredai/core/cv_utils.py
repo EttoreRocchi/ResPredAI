@@ -1,6 +1,5 @@
 """Cross-validation utilities for ResPredAI."""
 
-import logging
 import warnings
 from collections.abc import Generator
 from typing import Optional
@@ -13,8 +12,6 @@ from sklearn.model_selection import (
     StratifiedKFold,
 )
 from sklearn.model_selection._split import BaseCrossValidator
-
-logger = logging.getLogger("respredai")
 
 
 class RepeatedStratifiedGroupKFold(BaseCrossValidator):
@@ -229,7 +226,10 @@ def get_temporal_split(
         cutoff = pd.to_datetime(split_date)
     else:
         # Determine cutoff from ratio: sort by date, take first ratio fraction as train
-        assert split_ratio is not None  # guaranteed by caller validation
+        if split_ratio is None:
+            raise ValueError(
+                "Either split_date or split_ratio must be provided for temporal splitting"
+            )
         sorted_dates = temporal_values.sort_values()
         cutoff_idx = int(n * split_ratio)
         cutoff_idx = max(1, min(cutoff_idx, n - 1))

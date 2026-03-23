@@ -127,9 +127,9 @@ estimator = bayesian_ridge
 [Output]
 out_folder = ./output/
 
-# [Validation]
+[Validation]
 # Validation strategy: cv (default), temporal (prospective-style), or both
-# validation_strategy = cv
+validation_strategy = cv
 # temporal_split_column = collection_date  # Date column for temporal split
 # temporal_split_date = 2023-01-01  # Cutoff date (train < date, test >= date)
 # temporal_split_ratio = 0.8  # Alternative: fraction for training (by date order)

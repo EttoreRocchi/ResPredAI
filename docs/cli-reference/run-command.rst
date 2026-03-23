@@ -128,6 +128,8 @@ Controls the machine learning pipeline configuration.
     calibrate_probabilities = false
     probability_calibration_method = sigmoid
     probability_calibration_cv = 5
+    confidence_level = 0.95
+    n_bootstrap = 1000
 
 **Parameters:**
 
@@ -182,6 +184,16 @@ Controls the machine learning pipeline configuration.
   - CV folds used internally by CalibratedClassifierCV
   - Must be at least 2
   - Only used when ``calibrate_probabilities = true``
+
+- ``confidence_level`` - Confidence level for bootstrap confidence intervals (optional, default: ``0.95``)
+
+  - Must be between 0.5 and 1.0
+  - Controls the width of the reported CI bounds (e.g., 0.95 for 95% CI)
+
+- ``n_bootstrap`` - Number of bootstrap resamples for confidence intervals (optional, default: ``1000``)
+
+  - Must be at least 100
+  - Higher values give more stable CI estimates at the cost of computation time
 
 [Reproducibility] Section
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -447,8 +459,11 @@ Each ``{model}_metrics_detailed.csv`` contains:
 - **Metric**: Name of the metric (Precision, Recall, F1, MCC, Balanced Acc, AUROC, VME, ME, Brier Score, ECE, MCE)
 - **Mean**: Mean value across folds
 - **Std**: Standard deviation across folds
-- **CI95_lower**: Lower bound of 95% confidence interval (bootstrap, 1,000 resamples)
-- **CI95_upper**: Upper bound of 95% confidence interval (bootstrap, 1,000 resamples)
+- **SE**: Nadeau-Bengio corrected standard error, accounting for training set overlap in k-fold CV
+- **CI{n}_lower**: Lower bound of confidence interval (BCa bootstrap)
+- **CI{n}_upper**: Upper bound of confidence interval (BCa bootstrap)
+
+The CI percentage and number of bootstrap resamples are controlled by ``confidence_level`` and ``n_bootstrap`` in the ``[Pipeline]`` section (defaults: 95%, 1,000 resamples).
 
 **Calibration Metrics** (always computed, independent of probability calibration setting):
 

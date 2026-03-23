@@ -1,6 +1,5 @@
 """Reliability curve (calibration plot) generation for ResPredAI."""
 
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from respredai.core.calibration import compute_reliability_curve
+from respredai.core.constants import sanitize_name
 
 
 def plot_reliability_curve(
@@ -160,8 +160,8 @@ def save_reliability_curves(
     # Save the figure
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    model_safe = re.sub(r"[^\w.-]", "_", model)
-    target_safe = re.sub(r"[^\w.-]", "_", target)
+    model_safe = sanitize_name(model)
+    target_safe = sanitize_name(target)
     out_path = out_dir / f"reliability_curve_{model_safe}_{target_safe}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)

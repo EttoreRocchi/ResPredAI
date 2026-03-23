@@ -2,6 +2,26 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.7.1] - 2026-03-23
+
+### Added
+- **BCa Bootstrap Confidence Intervals**: replaced percentile bootstrap with bias-corrected and accelerated (BCa) method via `scipy.stats.bootstrap` for improved coverage on small samples and bounded/skewed metrics
+- **Nadeau-Bengio Corrected Standard Error**: new `SE` column in metrics CSV using the corrected variance formula `(1/k + n_test/n_train) * s**2` that accounts for training set overlap in k-fold CV. Summary report `±` notation now uses SE instead of raw Std
+- **Configurable bootstrap CI parameters**: `confidence_level` and `n_bootstrap` in `[Pipeline]` config section
+- **Constants module** (`respredai/core/constants.py`): centralized validation lists, directory names, and defaults
+
+### Fixed
+- Name sanitization unified across 8 files - `.replace(" ", "_")` and `re.sub()` patterns consolidated into `sanitize_name()` / `sanitize_metric_name()` (44 replacements)
+- `assert` in temporal split replaced with proper `ValueError`
+- Empty CV fold validation with warning when train/test sets are empty after splitting
+- Explicit warning when all bootstrap samples fail (previously returned NaN silently)
+
+### Changed
+- `ConfigHandler` split into 7 domain-specific dataclasses
+- Config validation lists now reference centralized constants from `constants.py`
+- README quick-start config example now shows `[Validation]` section (added in v1.7.0)
+- HTML report confidence intervals row now dynamically reflects configured `confidence_level` and `n_bootstrap`
+
 ## [1.7.0] - 2026-03-18
 
 ### Added

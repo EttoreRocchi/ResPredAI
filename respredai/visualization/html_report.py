@@ -3,7 +3,6 @@
 import base64
 import html as html_mod
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,13 @@ import numpy as np
 import pandas as pd
 
 from respredai import __version__
+from respredai.core.constants import (
+    DIR_CALIBRATION,
+    DIR_CONFUSION_MATRICES,
+    DIR_METRICS,
+    sanitize_metric_name,
+    sanitize_name,
+)
 
 logger = logging.getLogger("respredai")
 
@@ -19,6 +25,31 @@ logger = logging.getLogger("respredai")
 def _esc(value: object) -> str:
     """HTML-escape a value for safe interpolation into HTML."""
     return html_mod.escape(str(value))
+
+
+def _fmt_metric(data: dict, metric_base: str, decimals: int = 3) -> str:
+    """Format a metric value with optional CI bracket.
+
+    Parameters
+    ----------
+    data : dict
+        Metrics dictionary with keys like ``{metric_base}_mean``,
+        ``{metric_base}_ci_lower``, ``{metric_base}_ci_upper``.
+    metric_base : str
+        Base name of the metric (e.g. ``"AUROC"``, ``"Brier_Score"``).
+    decimals : int
+        Number of decimal places (3 for classification metrics, 4 for calibration).
+    """
+    mean = data.get(f"{metric_base}_mean", np.nan)
+    ci_lower = data.get(f"{metric_base}_ci_lower", np.nan)
+    ci_upper = data.get(f"{metric_base}_ci_upper", np.nan)
+    if np.isnan(mean):
+        return "N/A"
+    fmt = f".{decimals}f"
+    ci_str = ""
+    if not np.isnan(ci_lower) and not np.isnan(ci_upper):
+        ci_str = f' <span class="ci-bracket">[{ci_lower:{fmt}}-{ci_upper:{fmt}}]</span>'
+    return f"{mean:{fmt}}{ci_str}"
 
 
 def _get_css_styles() -> str:
@@ -230,7 +261,7 @@ def _generate_toc(targets: list[str]) -> str:
         "<ul>",
     ]
     for i, target in enumerate(targets, 1):
-        safe_id = target.replace(" ", "_")
+        safe_id = sanitize_name(target)
         toc_items.append(f'<li><a href="#results-{safe_id}">3.{i}. {_esc(target)}</a></li>')
     toc_items.extend(
         [
@@ -347,7 +378,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><td>Probability Calibration</td><td>{_esc(prob_calib_details)}</td></tr>
             <tr><td>Threshold Optimization</td><td>{_esc(threshold_details)}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{_esc(imputation_details)}</td></tr>
-            <tr><td>Confidence Intervals</td><td>95% (1,000 bootstrap samples)</td></tr>
+            <tr><td>Confidence Intervals</td><td>{int(getattr(config_handler, "confidence_level", 0.95) * 100)}% ({getattr(config_handler, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
         </table>
     </section>
     """
@@ -360,7 +391,7 @@ def _generate_results_section(
     sections = ['<section id="results">', "<h2>3. Results</h2>"]
 
     for idx, target in enumerate(targets, 1):
-        safe_id = target.replace(" ", "_")
+        safe_id = sanitize_name(target)
         sections.append(f'<h3 id="results-{safe_id}">3.{idx}. {_esc(target)}</h3>')
 
         # Build results table
@@ -372,26 +403,15 @@ def _generate_results_section(
 
             data = metrics_data[key]
 
-            def fmt_val(mean_key, ci_lower_key, ci_upper_key, std_key=None):
-                mean = data.get(mean_key, np.nan)
-                ci_lower = data.get(ci_lower_key, np.nan)
-                ci_upper = data.get(ci_upper_key, np.nan)
-                if np.isnan(mean):
-                    return "N/A"
-                ci_str = ""
-                if not np.isnan(ci_lower) and not np.isnan(ci_upper):
-                    ci_str = f' <span class="ci-bracket">[{ci_lower:.3f}-{ci_upper:.3f}]</span>'
-                return f"{mean:.3f}{ci_str}"
-
             row = f"""
             <tr>
                 <td>{_esc(model)}</td>
-                <td class="metric-value">{fmt_val("AUROC_mean", "AUROC_ci_lower", "AUROC_ci_upper")}</td>
-                <td class="metric-value">{fmt_val("F1_weighted_mean", "F1_weighted_ci_lower", "F1_weighted_ci_upper")}</td>
-                <td class="metric-value">{fmt_val("MCC_mean", "MCC_ci_lower", "MCC_ci_upper")}</td>
-                <td class="metric-value">{fmt_val("Balanced_Acc_mean", "Balanced_Acc_ci_lower", "Balanced_Acc_ci_upper")}</td>
-                <td class="metric-value">{fmt_val("VME_mean", "VME_ci_lower", "VME_ci_upper")}</td>
-                <td class="metric-value">{fmt_val("ME_mean", "ME_ci_lower", "ME_ci_upper")}</td>
+                <td class="metric-value">{_fmt_metric(data, "AUROC")}</td>
+                <td class="metric-value">{_fmt_metric(data, "F1_weighted")}</td>
+                <td class="metric-value">{_fmt_metric(data, "MCC")}</td>
+                <td class="metric-value">{_fmt_metric(data, "Balanced_Acc")}</td>
+                <td class="metric-value">{_fmt_metric(data, "VME")}</td>
+                <td class="metric-value">{_fmt_metric(data, "ME")}</td>
             </tr>
             """
             table_rows.append(row)
@@ -426,7 +446,7 @@ def _generate_confusion_matrices_section(
     output_path: Path, models: list[str], targets: list[str]
 ) -> str:
     """Generate confusion matrices section with responsive grid layout."""
-    cm_dir = output_path / "confusion_matrices"
+    cm_dir = output_path / DIR_CONFUSION_MATRICES
     sections = ['<section id="confusion-matrices">', "<h2>4. Confusion Matrices</h2>"]
 
     if not cm_dir.exists():
@@ -436,12 +456,12 @@ def _generate_confusion_matrices_section(
 
     found_any = False
     for model in models:
-        model_safe = re.sub(r"[^\w.-]", "_", model)
+        model_safe = sanitize_name(model)
         sections.append(f"<h3>{_esc(model)}</h3>")
         sections.append('<div class="cm-grid">')
 
         for target in targets:
-            target_safe = re.sub(r"[^\w.-]", "_", target)
+            target_safe = sanitize_name(target)
             cm_path = cm_dir / f"Confusion_matrix_{model_safe}_{target_safe}.png"
 
             if cm_path.exists():
@@ -477,10 +497,10 @@ def _generate_calibration_section(
         "better calibration.</p>",
     ]
 
-    calibration_dir = output_path / "calibration"
+    calibration_dir = output_path / DIR_CALIBRATION
 
     for model in models:
-        model_safe = re.sub(r"[^\w.-]", "_", model)
+        model_safe = sanitize_name(model)
         sections.append(f"<h3>{_esc(model)}</h3>")
 
         # Build calibration metrics table
@@ -492,23 +512,12 @@ def _generate_calibration_section(
 
             data = metrics_data[key]
 
-            def fmt_calib(metric_base):
-                mean = data.get(f"{metric_base}_mean", np.nan)
-                ci_lower = data.get(f"{metric_base}_ci_lower", np.nan)
-                ci_upper = data.get(f"{metric_base}_ci_upper", np.nan)
-                if np.isnan(mean):
-                    return "N/A"
-                ci_str = ""
-                if not np.isnan(ci_lower) and not np.isnan(ci_upper):
-                    ci_str = f' <span class="ci-bracket">[{ci_lower:.4f}-{ci_upper:.4f}]</span>'
-                return f"{mean:.4f}{ci_str}"
-
             row = f"""
             <tr>
                 <td>{_esc(target)}</td>
-                <td class="metric-value">{fmt_calib("Brier_Score")}</td>
-                <td class="metric-value">{fmt_calib("ECE")}</td>
-                <td class="metric-value">{fmt_calib("MCE")}</td>
+                <td class="metric-value">{_fmt_metric(data, "Brier_Score", decimals=4)}</td>
+                <td class="metric-value">{_fmt_metric(data, "ECE", decimals=4)}</td>
+                <td class="metric-value">{_fmt_metric(data, "MCE", decimals=4)}</td>
             </tr>
             """
             table_rows.append(row)
@@ -535,7 +544,7 @@ def _generate_calibration_section(
 
         found_curves = False
         for target in targets:
-            target_safe = re.sub(r"[^\w.-]", "_", target)
+            target_safe = sanitize_name(target)
             curve_path = calibration_dir / f"reliability_curve_{model_safe}_{target_safe}.png"
 
             if curve_path.exists():
@@ -572,51 +581,36 @@ def _generate_footer() -> str:
     """
 
 
-def _collect_metrics_data(output_path: Path, models: list[str], targets: list[str]) -> dict:
-    """Collect all metrics data from CSV files."""
-    metrics_data = {}
-
-    for target in targets:
-        target_safe = re.sub(r"[^\w.-]", "_", target)
-        metrics_dir = output_path / "metrics" / target_safe
-
-        for model in models:
-            model_safe = re.sub(r"[^\w.-]", "_", model)
-            metrics_file = metrics_dir / f"{model_safe}_metrics_detailed.csv"
-
-            if metrics_file.exists():
-                try:
-                    df = pd.read_csv(metrics_file)
-                    key = f"{model}_{target}"
-                    metrics_data[key] = {}
-
-                    for _, row in df.iterrows():
-                        metric_name = re.sub(r"[^\w]", "_", row["Metric"])
-                        metrics_data[key][f"{metric_name}_mean"] = row["Mean"]
-                        metrics_data[key][f"{metric_name}_std"] = row["Std"]
-                        if "CI95_lower" in df.columns:
-                            metrics_data[key][f"{metric_name}_ci_lower"] = row["CI95_lower"]
-                            metrics_data[key][f"{metric_name}_ci_upper"] = row["CI95_upper"]
-                except Exception as exc:
-                    logger.debug("Failed to parse metrics file %s: %s", metrics_file, exc)
-                    continue
-
-    return metrics_data
-
-
-def _collect_temporal_metrics_data(
-    output_path: Path, models: list[str], targets: list[str]
+def _collect_metrics_data(
+    output_path: Path,
+    models: list[str],
+    targets: list[str],
+    filename_pattern: str = "{model}_metrics_detailed.csv",
 ) -> dict:
-    """Collect temporal validation metrics data from CSV files."""
-    metrics_data = {}
+    """Collect metrics data from CSV files.
+
+    Parameters
+    ----------
+    output_path : Path
+        Root output directory.
+    models : list[str]
+        Model names.
+    targets : list[str]
+        Target names.
+    filename_pattern : str
+        CSV filename pattern with ``{model}`` placeholder.
+        Use ``"{model}_metrics_detailed.csv"`` for CV results or
+        ``"{model}_temporal_metrics.csv"`` for temporal validation.
+    """
+    metrics_data: dict = {}
 
     for target in targets:
-        target_safe = re.sub(r"[^\w.-]", "_", target)
-        metrics_dir = output_path / "metrics" / target_safe
+        target_safe = sanitize_name(target)
+        metrics_dir = output_path / DIR_METRICS / target_safe
 
         for model in models:
-            model_safe = re.sub(r"[^\w.-]", "_", model)
-            metrics_file = metrics_dir / f"{model_safe}_temporal_metrics.csv"
+            model_safe = sanitize_name(model)
+            metrics_file = metrics_dir / filename_pattern.format(model=model_safe)
 
             if metrics_file.exists():
                 try:
@@ -625,8 +619,12 @@ def _collect_temporal_metrics_data(
                     metrics_data[key] = {}
 
                     for _, row in df.iterrows():
-                        metric_name = re.sub(r"[^\w]", "_", row["Metric"])
+                        metric_name = sanitize_metric_name(row["Metric"])
                         metrics_data[key][f"{metric_name}_mean"] = row["Mean"]
+                        if "Std" in df.columns:
+                            metrics_data[key][f"{metric_name}_std"] = row["Std"]
+                        if "SE" in df.columns:
+                            metrics_data[key][f"{metric_name}_se"] = row["SE"]
                         if "CI95_lower" in df.columns:
                             metrics_data[key][f"{metric_name}_ci_lower"] = row["CI95_lower"]
                             metrics_data[key][f"{metric_name}_ci_upper"] = row["CI95_upper"]
@@ -724,7 +722,9 @@ def generate_html_report(
 
     # Collect all data
     metrics_data = _collect_metrics_data(output_path, models, targets)
-    temporal_data = _collect_temporal_metrics_data(output_path, models, targets)
+    temporal_data = _collect_metrics_data(
+        output_path, models, targets, filename_pattern="{model}_temporal_metrics.csv"
+    )
 
     # Build HTML
     html_parts = [

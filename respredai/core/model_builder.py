@@ -22,6 +22,7 @@ from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 from xgboost import XGBClassifier
 
+from respredai.core.constants import AVAILABLE_MODELS
 from respredai.core.params import PARAM_GRID
 
 
@@ -192,8 +193,7 @@ def _create_classifier(
         )
     else:
         raise ValueError(
-            f"Possible models are 'LR', 'XGB', 'RF', 'MLP', 'CatBoost', 'TabPFN', "
-            f"'RBF_SVC', 'Linear_SVC', and 'KNN'. {model_name} was passed instead."
+            f"Possible models are {AVAILABLE_MODELS}. {model_name} was passed instead."
         )
 
 

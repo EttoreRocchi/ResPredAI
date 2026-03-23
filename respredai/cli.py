@@ -17,6 +17,11 @@ from rich.progress import (
 from rich.table import Table
 
 from respredai import __version__
+from respredai.core.constants import (
+    DIR_FEATURE_IMPORTANCE,
+    DIR_TRAINED_MODELS,
+    FILE_TRAINING_METADATA,
+)
 from respredai.core.workflow import (
     perform_evaluation,
     perform_pipeline,
@@ -666,7 +671,7 @@ def train(
             console.print_exception()
         raise typer.Exit(code=1)
 
-    trained_models_dir = Path(config_handler.out_folder) / "trained_models"
+    trained_models_dir = Path(config_handler.out_folder) / DIR_TRAINED_MODELS
     success_panel = Panel(
         f"[bold green]✓ Training completed successfully![/bold green]\n\n"
         f"Models saved to: [cyan]{trained_models_dir}[/cyan]\n"
@@ -718,7 +723,7 @@ def evaluate(
         )
         raise typer.Exit(code=1)
 
-    metadata_path = models_dir / "training_metadata.json"
+    metadata_path = models_dir / FILE_TRAINING_METADATA
     if not metadata_path.exists():
         console.print(
             f"\n[bold red]Error:[/bold red] Training metadata not found: [cyan]{metadata_path}[/cyan]\n\n"
@@ -1046,17 +1051,17 @@ def _show_output_paths(
     no_plot: bool,
 ) -> None:
     """Print the output file paths for feature importance results."""
-    import re
+    from respredai.core.constants import sanitize_name
 
-    model_safe = re.sub(r"[^\w.-]", "_", model)
-    target_safe = re.sub(r"[^\w.-]", "_", target)
+    model_safe = sanitize_name(model)
+    target_safe = sanitize_name(target)
     suffix = "_shap" if method == "shap" else ""
 
     output_messages = []
     if not no_csv:
         csv_path = (
             output_folder
-            / "feature_importance"
+            / DIR_FEATURE_IMPORTANCE
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.csv"
         )
@@ -1064,7 +1069,7 @@ def _show_output_paths(
     if not no_plot:
         plot_path = (
             output_folder
-            / "feature_importance"
+            / DIR_FEATURE_IMPORTANCE
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.png"
         )

@@ -12,6 +12,8 @@ import shap
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import TunedThresholdClassifierCV
 
+from respredai.core.constants import DIR_FEATURE_IMPORTANCE, sanitize_name
+
 
 def unwrap_calibrated_model(model):
     """
@@ -256,8 +258,17 @@ def extract_feature_importance_from_models(
         )
 
         importances_list = []
-        for model in fold_models:
-            importance = get_feature_importance(model, feature_names)
+        for fold_idx, model in enumerate(fold_models):
+            if model is None:
+                continue
+            inner = unwrap_calibrated_model(model)
+            n_feat = (
+                inner.coef_.shape[1] if hasattr(inner, "coef_") else len(inner.feature_importances_)
+            )
+            fold_td = [fold_test_data[fold_idx]] if fold_idx < len(fold_test_data) else []
+            fold_tr = [fold_transformers[fold_idx]] if fold_idx < len(fold_transformers) else []
+            fold_names = _resolve_feature_names(model, fold_td, fold_tr, n_feat)
+            importance = get_feature_importance(model, fold_names)
             if importance is not None:
                 importances_list.append(importance)
 
@@ -273,6 +284,7 @@ def extract_feature_importance_from_models(
             else:
                 importances_df = importances_df[abs_mean_importance.index]
 
+            feature_names = importances_df.columns.tolist()
             return importances_df, feature_names, "native"
 
     # Fall back to SHAP if native not available
@@ -493,15 +505,15 @@ def process_feature_importance(
 
     importances_df, feature_names, method = result
 
-    model_safe = model.replace(" ", "_")
-    target_safe = target.replace(" ", "_")
+    model_safe = sanitize_name(model)
+    target_safe = sanitize_name(target)
 
     suffix = "_shap" if method == "shap" else ""
 
     if save_csv:
         csv_path = (
             Path(output_folder)
-            / "feature_importance"
+            / DIR_FEATURE_IMPORTANCE
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.csv"
         )
@@ -510,7 +522,7 @@ def process_feature_importance(
     if save_plot:
         plot_path = (
             Path(output_folder)
-            / "feature_importance"
+            / DIR_FEATURE_IMPORTANCE
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.png"
         )

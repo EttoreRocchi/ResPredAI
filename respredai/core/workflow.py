@@ -21,6 +21,17 @@ from sklearn.model_selection import (
 )
 from sklearn.preprocessing import OneHotEncoder
 
+from respredai.core.constants import (
+    DEFAULT_THRESHOLD,
+    DIR_CALIBRATION,
+    DIR_METRICS,
+    DIR_PREDICTIONS,
+    DIR_TRAINED_MODELS,
+    FILE_EVALUATION_SUMMARY,
+    FILE_TRAINING_METADATA,
+    SAMPLE_SIZE_THRESHOLD_DECISION,
+    sanitize_name,
+)
 from respredai.core.cv_utils import get_outer_cv, get_temporal_split
 from respredai.core.metrics import metric_dict, save_metrics_summary
 from respredai.core.model_builder import get_pipeline
@@ -35,7 +46,7 @@ def _deduplicate_repeated_cv_predictions(
     y_true: list,
     y_pred: list,
     y_prob: list,
-    threshold: float = 0.5,
+    threshold: float = DEFAULT_THRESHOLD,
 ) -> tuple:
     """Deduplicate sample-level predictions from repeated CV by averaging per sample.
 
@@ -150,6 +161,63 @@ def _apply_ohe_and_clean(ohe_transformer, X_train, X_test=None):
     return X_train_ohe
 
 
+def _resolve_threshold_method(config_handler, n_train_samples):
+    """Resolve 'auto' threshold method based on training set size."""
+    method = config_handler.threshold_method
+    if method == "auto":
+        method = "oof" if n_train_samples < SAMPLE_SIZE_THRESHOLD_DECISION else "cv"
+    return method
+
+
+def _predict_with_threshold(
+    classifier, X_scaled, calibrate_threshold, threshold_method, best_threshold
+):
+    """Predict class labels using calibrated threshold.
+
+    Parameters
+    ----------
+    classifier : estimator
+        Fitted classifier (possibly TunedThresholdClassifierCV).
+    X_scaled : array-like
+        Scaled feature matrix.
+    calibrate_threshold : bool
+        Whether threshold calibration was enabled.
+    threshold_method : str
+        'oof' or 'cv'.
+    best_threshold : float
+        Threshold from OOF optimization (used only when method='oof').
+
+    Returns
+    -------
+    tuple of (y_pred, y_prob)
+    """
+    y_prob = classifier.predict_proba(X_scaled)
+    if calibrate_threshold and threshold_method == "cv":
+        y_pred = classifier.predict(X_scaled)
+    elif calibrate_threshold and threshold_method == "oof":
+        y_pred = (y_prob[:, 1] >= best_threshold).astype(int)
+    else:
+        y_pred = classifier.predict(X_scaled)
+    return y_pred, y_prob
+
+
+def _get_pipeline_for_model(model_name, config_handler, datasetter):
+    """Build transformer + GridSearchCV for a given model using shared config."""
+    return get_pipeline(
+        model_name=model_name,
+        continuous_cols=datasetter.continuous_features,
+        inner_folds=config_handler.inner_folds,
+        n_jobs=config_handler.n_jobs,
+        rnd_state=config_handler.seed,
+        use_groups=(datasetter.groups is not None),
+        imputation_method=config_handler.imputation_method,
+        imputation_strategy=config_handler.imputation_strategy,
+        imputation_n_neighbors=config_handler.imputation_n_neighbors,
+        imputation_estimator=config_handler.imputation_estimator,
+        calibrate_probabilities=config_handler.calibrate_probabilities,
+    )
+
+
 def _generate_final_reports(
     config_handler: ConfigHandler,
     Y: pd.DataFrame,
@@ -250,7 +318,7 @@ def _compute_ci_metrics_for_target(
             _, _, thresholds = roc_curve(y_true_ci, y_prob_ci[:, 1])
 
             best_score = float("-inf")
-            dedup_threshold = 0.5
+            dedup_threshold = DEFAULT_THRESHOLD
             for thresh in thresholds:
                 y_pred_thresh = (y_prob_ci[:, 1] >= thresh).astype(int)
                 score = threshold_scorer(y_true_ci, y_pred_thresh)
@@ -258,7 +326,7 @@ def _compute_ci_metrics_for_target(
                     best_score = score
                     dedup_threshold = thresh
         else:
-            dedup_threshold = 0.5
+            dedup_threshold = DEFAULT_THRESHOLD
 
         y_pred_ci = (y_prob_ci[:, 1] >= dedup_threshold).astype(int)
     else:
@@ -269,8 +337,8 @@ def _compute_ci_metrics_for_target(
     save_metrics_summary(
         metrics_dict=all_metrics[target],
         output_path=metrics_output_path,
-        confidence=0.95,
-        n_bootstrap=1_000,
+        confidence=config_handler.confidence_level,
+        n_bootstrap=config_handler.n_bootstrap,
         random_state=config_handler.seed,
         y_true_all=y_true_ci,
         y_pred_all=y_pred_ci,
@@ -283,21 +351,26 @@ def _compute_ci_metrics_for_target(
 def _apply_probability_calibration(
     best_estimator,
     config_handler: ConfigHandler,
-    datasetter: DataSetter,
     X_train_scaled,
     y_train,
-    train_set,
+    groups=None,
 ):
-    """Wrap estimator with CalibratedClassifierCV and return calibrated estimator + splits."""
-    if datasetter.groups is not None:
+    """Wrap estimator with CalibratedClassifierCV and return calibrated estimator + splits.
+
+    Parameters
+    ----------
+    groups : array-like or None
+        Pre-subsetted group labels for the training data. Pass
+        ``datasetter.groups[train_set]`` for CV folds, ``datasetter.groups``
+        for full-dataset training, or ``None`` when groups are unused.
+    """
+    if groups is not None:
         prob_calib_cv = StratifiedGroupKFold(
             n_splits=config_handler.probability_calibration_cv,
             shuffle=True,
             random_state=config_handler.seed,
         )
-        prob_calib_splits = list(
-            prob_calib_cv.split(X_train_scaled, y_train, datasetter.groups[train_set])
-        )
+        prob_calib_splits = list(prob_calib_cv.split(X_train_scaled, y_train, groups))
     else:
         prob_calib_splits = config_handler.probability_calibration_cv
 
@@ -314,30 +387,52 @@ def _apply_probability_calibration(
 def _optimize_threshold(
     best_estimator,
     config_handler: ConfigHandler,
-    datasetter: DataSetter,
-    grid,
     X_train_scaled,
     y_train,
-    train_set,
+    grid_estimator,
     best_params: dict,
+    groups=None,
     prob_calib_splits=None,
 ):
-    """Find the optimal decision threshold. Returns (best_classifier, best_threshold, method)."""
-    threshold_method = config_handler.threshold_method
-    if threshold_method == "auto":
-        threshold_method = "oof" if len(y_train) < 1000 else "cv"
+    """Find the optimal decision threshold.
+
+    Parameters
+    ----------
+    best_estimator : estimator
+        Fitted (possibly calibrated) estimator from GridSearchCV.
+    config_handler : ConfigHandler
+        Configuration object.
+    X_train_scaled : array-like
+        Scaled training features.
+    y_train : array-like
+        Training labels.
+    grid_estimator : estimator
+        Unfitted estimator from ``grid.estimator`` - used to build a fresh
+        clone for the CV threshold method.
+    best_params : dict
+        Best hyperparameters from GridSearchCV.
+    groups : array-like or None
+        Pre-subsetted group labels for the training data.
+    prob_calib_splits : list or int or None
+        CV splits from probability calibration (used in CV branch).
+
+    Returns
+    -------
+    tuple of (best_classifier, best_threshold, threshold_method)
+    """
+    threshold_method = _resolve_threshold_method(config_handler, len(y_train))
 
     from respredai.core.metrics import get_threshold_scorer
 
     if threshold_method == "oof":
         # OOF predictions approach
-        if datasetter.groups is not None:
+        if groups is not None:
             inner_cv = StratifiedGroupKFold(
                 n_splits=config_handler.inner_folds,
                 shuffle=True,
                 random_state=config_handler.seed,
             )
-            cv_fit_params = {"groups": datasetter.groups[train_set]}
+            cv_fit_params = {"groups": groups}
         else:
             inner_cv = StratifiedKFold(
                 n_splits=config_handler.inner_folds,
@@ -372,10 +467,10 @@ def _optimize_threshold(
         _, _, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
 
         best_score = float("-inf")
-        best_threshold = 0.5
+        best_threshold = DEFAULT_THRESHOLD
         for thresh in thresholds:
             y_pred_thresh = (y_pred_proba_oof[:, 1] >= thresh).astype(int)
-            score = threshold_scorer(y_train.values, y_pred_thresh)
+            score = threshold_scorer(np.asarray(y_train), y_pred_thresh)
             if score > best_score:
                 best_score = score
                 best_threshold = thresh
@@ -391,10 +486,10 @@ def _optimize_threshold(
         objective_scorer = make_scorer(threshold_scorer_fn)
 
         if config_handler.calibrate_probabilities:
-            base_est = clone(grid.estimator)
+            base_est = clone(grid_estimator)
             base_est.set_params(**best_params)
 
-            if datasetter.groups is not None:
+            if groups is not None:
                 calib_cv = StratifiedGroupKFold(
                     n_splits=config_handler.probability_calibration_cv,
                     shuffle=True,
@@ -409,10 +504,10 @@ def _optimize_threshold(
                 n_jobs=1,
             )
         else:
-            estimator_for_threshold = clone(grid.estimator)
+            estimator_for_threshold = clone(grid_estimator)
             estimator_for_threshold.set_params(**best_params)
 
-        if datasetter.groups is not None:
+        if groups is not None:
             inner_tuner_cv = StratifiedGroupKFold(
                 n_splits=config_handler.inner_folds,
                 shuffle=True,
@@ -433,8 +528,8 @@ def _optimize_threshold(
         )
 
         fit_kwargs = {}
-        if datasetter.groups is not None:
-            fit_kwargs["groups"] = datasetter.groups[train_set]
+        if groups is not None:
+            fit_kwargs["groups"] = groups
         tuned_model.fit(X_train_scaled, y_train, **fit_kwargs)
         return tuned_model, tuned_model.best_threshold_, threshold_method
 
@@ -507,19 +602,7 @@ def perform_pipeline(
             progress_callback.start_model(model, total_work=total_work_for_model)
 
         try:
-            transformer, grid = get_pipeline(
-                model_name=model,
-                continuous_cols=datasetter.continuous_features,
-                inner_folds=config_handler.inner_folds,
-                n_jobs=config_handler.n_jobs,
-                rnd_state=config_handler.seed,
-                use_groups=(datasetter.groups is not None),
-                imputation_method=config_handler.imputation_method,
-                imputation_strategy=config_handler.imputation_strategy,
-                imputation_n_neighbors=config_handler.imputation_n_neighbors,
-                imputation_estimator=config_handler.imputation_estimator,
-                calibrate_probabilities=config_handler.calibrate_probabilities,
-            )
+            transformer, grid = _get_pipeline_for_model(model, config_handler, datasetter)
         except Exception as e:
             if config_handler.verbosity:
                 config_handler.logger.error(f"Failed to initialize model {model}: {str(e)}")
@@ -668,6 +751,15 @@ def perform_pipeline(
                 if config_handler.verbosity == 2:
                     config_handler.logger.info(f"Starting iteration: {i + 1}.")
 
+                # Validate fold has data
+                if len(train_set) == 0 or len(test_set) == 0:
+                    empty = "training" if len(train_set) == 0 else "test"
+                    warnings.warn(
+                        f"Fold {i + 1}: empty {empty} set, skipping",
+                        stacklevel=2,
+                    )
+                    continue
+
                 X_train_raw, X_test_raw = X.iloc[train_set], X.iloc[test_set]
                 y_train, y_test = y.iloc[train_set], y.iloc[test_set]
 
@@ -702,10 +794,11 @@ def perform_pipeline(
                         best_estimator, prob_calib_splits = _apply_probability_calibration(
                             best_estimator,
                             config_handler,
-                            datasetter,
                             X_train_scaled,
                             y_train,
-                            train_set,
+                            groups=datasetter.groups[train_set]
+                            if datasetter.groups is not None
+                            else None,
                         )
                         if config_handler.verbosity == 2:
                             config_handler.logger.info(
@@ -718,28 +811,27 @@ def perform_pipeline(
                         best_classifier, best_threshold, threshold_method = _optimize_threshold(
                             best_estimator,
                             config_handler,
-                            datasetter,
-                            grid,
                             X_train_scaled,
                             y_train,
-                            train_set,
-                            best_params,
-                            prob_calib_splits,
+                            grid_estimator=grid.estimator,
+                            best_params=best_params,
+                            groups=datasetter.groups[train_set]
+                            if datasetter.groups is not None
+                            else None,
+                            prob_calib_splits=prob_calib_splits,
                         )
                     else:
                         best_classifier = best_estimator
-                        best_threshold = 0.5
+                        best_threshold = DEFAULT_THRESHOLD
 
                     # Step 4: Predict on test set using calibrated threshold
-                    y_prob = best_classifier.predict_proba(X_test_scaled)
-                    if config_handler.calibrate_threshold and threshold_method == "cv":
-                        # TunedThresholdClassifierCV applies threshold internally
-                        y_pred = best_classifier.predict(X_test_scaled)
-                    elif config_handler.calibrate_threshold and threshold_method == "oof":
-                        # OOF method: manually apply threshold
-                        y_pred = (y_prob[:, 1] >= best_threshold).astype(int)
-                    else:
-                        y_pred = best_classifier.predict(X_test_scaled)
+                    y_pred, y_prob = _predict_with_threshold(
+                        best_classifier,
+                        X_test_scaled,
+                        config_handler.calibrate_threshold,
+                        threshold_method,
+                        best_threshold,
+                    )
 
                     # Calculate comprehensive metrics
                     fold_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
@@ -878,9 +970,7 @@ def perform_pipeline(
         # Calculate average confusion matrices
         average_cms = _aggregate_confusion_matrices(cms, Y, config_handler)
 
-        import re
-
-        model_safe_name = re.sub(r"[^\w.-]", "_", model)
+        model_safe_name = sanitize_name(model)
 
         # Save confusion matrix visualizations
         save_cm(
@@ -894,10 +984,10 @@ def perform_pipeline(
 
         # Save comprehensive metrics for each target
         for target in Y.columns:
-            target_safe_name = re.sub(r"[^\w.-]", "_", target)
+            target_safe_name = sanitize_name(target)
             metrics_output_path = (
                 Path(config_handler.out_folder)
-                / "metrics"
+                / DIR_METRICS
                 / target_safe_name
                 / f"{model_safe_name}_metrics_detailed.csv"
             )
@@ -918,7 +1008,7 @@ def perform_pipeline(
             if fold_y_true_calib[target] and fold_y_prob_calib[target]:
                 from respredai.visualization.reliability_curves import save_reliability_curves
 
-                calibration_dir = Path(config_handler.out_folder) / "calibration"
+                calibration_dir = Path(config_handler.out_folder) / DIR_CALIBRATION
                 n_total_folds = len(fold_y_true_calib[target])
                 save_reliability_curves(
                     y_true_list=fold_y_true_calib[target],
@@ -1033,19 +1123,7 @@ def perform_temporal_validation(
             config_handler.logger.info(f"[Temporal] Starting model: {model_name}")
 
         try:
-            transformer, grid = get_pipeline(
-                model_name=model_name,
-                continuous_cols=datasetter.continuous_features,
-                inner_folds=config_handler.inner_folds,
-                n_jobs=config_handler.n_jobs,
-                rnd_state=config_handler.seed,
-                use_groups=(datasetter.groups is not None),
-                imputation_method=config_handler.imputation_method,
-                imputation_strategy=config_handler.imputation_strategy,
-                imputation_n_neighbors=config_handler.imputation_n_neighbors,
-                imputation_estimator=config_handler.imputation_estimator,
-                calibrate_probabilities=config_handler.calibrate_probabilities,
-            )
+            transformer, grid = _get_pipeline_for_model(model_name, config_handler, datasetter)
         except Exception as e:
             if config_handler.verbosity:
                 config_handler.logger.error(
@@ -1081,171 +1159,55 @@ def perform_temporal_validation(
                 best_params = grid.best_params_
 
                 # Post-hoc probability calibration (if enabled)
+                prob_calib_splits = None
                 if config_handler.calibrate_probabilities:
-                    if datasetter.groups is not None:
-                        prob_calib_cv = StratifiedGroupKFold(
-                            n_splits=config_handler.probability_calibration_cv,
-                            shuffle=True,
-                            random_state=config_handler.seed,
-                        )
-                        prob_calib_splits = list(
-                            prob_calib_cv.split(
-                                X_train_scaled, y_train, datasetter.groups[train_idx]
-                            )
-                        )
-                    else:
-                        prob_calib_splits = config_handler.probability_calibration_cv
-
-                    calibrated_classifier = CalibratedClassifierCV(
-                        estimator=best_estimator,
-                        method=config_handler.probability_calibration_method,
-                        cv=prob_calib_splits,
-                        n_jobs=1,
+                    best_estimator, prob_calib_splits = _apply_probability_calibration(
+                        best_estimator,
+                        config_handler,
+                        X_train_scaled,
+                        y_train,
+                        groups=datasetter.groups[train_idx]
+                        if datasetter.groups is not None
+                        else None,
                     )
-                    calibrated_classifier.fit(X_train_scaled, y_train)
-                    best_estimator = calibrated_classifier
 
                 # Threshold optimization (if enabled)
                 if config_handler.calibrate_threshold:
-                    threshold_method = config_handler.threshold_method
-                    if threshold_method == "auto":
-                        threshold_method = "oof" if len(y_train) < 1000 else "cv"
-
-                    if threshold_method == "oof":
-                        if datasetter.groups is not None:
-                            inner_cv = StratifiedGroupKFold(
-                                n_splits=config_handler.inner_folds,
-                                shuffle=True,
-                                random_state=config_handler.seed,
-                            )
-                            cv_fit_params = {"groups": datasetter.groups[train_idx]}
-                        else:
-                            inner_cv = StratifiedKFold(
-                                n_splits=config_handler.inner_folds,
-                                shuffle=True,
-                                random_state=config_handler.seed,
-                            )
-                            cv_fit_params = {}
-
-                        oof_estimator = clone(best_estimator)
-                        if (
-                            config_handler.calibrate_probabilities
-                            and hasattr(oof_estimator, "cv")
-                            and isinstance(getattr(oof_estimator, "cv", None), list)
-                        ):
-                            oof_estimator.cv = config_handler.probability_calibration_cv
-
-                        y_pred_proba_oof = cross_val_predict(
-                            oof_estimator,
-                            X_train_scaled,
-                            y_train,
-                            cv=inner_cv,
-                            method="predict_proba",
-                            **cv_fit_params,
-                        )
-
-                        from respredai.core.metrics import get_threshold_scorer
-
-                        threshold_scorer = get_threshold_scorer(
-                            config_handler.threshold_objective,
-                            config_handler.vme_cost,
-                            config_handler.me_cost,
-                        )
-
-                        _, _, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
-                        best_score = float("-inf")
-                        best_threshold = 0.5
-                        for thresh in thresholds:
-                            y_pred_thresh = (y_pred_proba_oof[:, 1] >= thresh).astype(int)
-                            score = threshold_scorer(y_train.values, y_pred_thresh)
-                            if score > best_score:
-                                best_score = score
-                                best_threshold = thresh
-
-                        best_classifier = best_estimator
-
-                    else:  # threshold_method == "cv"
-                        from respredai.core.metrics import get_threshold_scorer
-
-                        threshold_scorer_fn = get_threshold_scorer(
-                            config_handler.threshold_objective,
-                            config_handler.vme_cost,
-                            config_handler.me_cost,
-                        )
-                        objective_scorer = make_scorer(threshold_scorer_fn)
-
-                        if config_handler.calibrate_probabilities:
-                            base_est = clone(grid.estimator)
-                            base_est.set_params(**best_params)
-
-                            if datasetter.groups is not None:
-                                calib_cv = StratifiedGroupKFold(
-                                    n_splits=config_handler.probability_calibration_cv,
-                                    shuffle=True,
-                                    random_state=config_handler.seed,
-                                )
-                            else:
-                                calib_cv = prob_calib_splits
-                            estimator_for_threshold = CalibratedClassifierCV(
-                                estimator=base_est,
-                                method=config_handler.probability_calibration_method,
-                                cv=calib_cv,
-                                n_jobs=1,
-                            )
-                        else:
-                            estimator_for_threshold = clone(grid.estimator)
-                            estimator_for_threshold.set_params(**best_params)
-
-                        if datasetter.groups is not None:
-                            inner_tuner_cv = StratifiedGroupKFold(
-                                n_splits=config_handler.inner_folds,
-                                shuffle=True,
-                                random_state=config_handler.seed,
-                            )
-                        else:
-                            inner_tuner_cv = StratifiedKFold(
-                                n_splits=config_handler.inner_folds,
-                                shuffle=True,
-                                random_state=config_handler.seed,
-                            )
-
-                        tuned_model = TunedThresholdClassifierCV(
-                            estimator=estimator_for_threshold,
-                            cv=inner_tuner_cv,
-                            scoring=objective_scorer,
-                            n_jobs=1,
-                        )
-
-                        fit_kwargs = {}
-                        if datasetter.groups is not None:
-                            fit_kwargs["groups"] = datasetter.groups[train_idx]
-                        tuned_model.fit(X_train_scaled, y_train, **fit_kwargs)
-                        best_classifier = tuned_model
-                        best_threshold = tuned_model.best_threshold_
+                    best_classifier, best_threshold, threshold_method = _optimize_threshold(
+                        best_estimator,
+                        config_handler,
+                        X_train_scaled,
+                        y_train,
+                        grid_estimator=grid.estimator,
+                        best_params=best_params,
+                        groups=datasetter.groups[train_idx]
+                        if datasetter.groups is not None
+                        else None,
+                        prob_calib_splits=prob_calib_splits,
+                    )
                 else:
                     best_classifier = best_estimator
-                    best_threshold = 0.5
+                    best_threshold = DEFAULT_THRESHOLD
+                    threshold_method = "oof"  # placeholder, unused when not calibrating
 
                 # Predict on test set
-                if config_handler.calibrate_threshold and threshold_method == "cv":
-                    y_pred = best_classifier.predict(X_test_scaled)
-                    y_prob = best_classifier.predict_proba(X_test_scaled)
-                elif config_handler.calibrate_threshold and threshold_method == "oof":
-                    y_prob = best_classifier.predict_proba(X_test_scaled)
-                    y_pred = (y_prob[:, 1] >= best_threshold).astype(int)
-                else:
-                    y_prob = best_classifier.predict_proba(X_test_scaled)
-                    y_pred = best_classifier.predict(X_test_scaled)
+                y_pred, y_prob = _predict_with_threshold(
+                    best_classifier,
+                    X_test_scaled,
+                    config_handler.calibrate_threshold,
+                    threshold_method,
+                    best_threshold,
+                )
 
                 # Calculate metrics
                 temporal_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
 
                 # Save metrics
-                model_safe = model_name.replace(" ", "_")
-                target_safe = target.replace(" ", "_")
+                model_safe = sanitize_name(model_name)
+                target_safe = sanitize_name(target)
                 metrics_path = (
                     Path(config_handler.out_folder)
-                    / "metrics"
+                    / DIR_METRICS
                     / target_safe
                     / f"{model_safe}_temporal_metrics.csv"
                 )
@@ -1253,8 +1215,8 @@ def perform_temporal_validation(
                 save_metrics_summary(
                     metrics_dict=[temporal_metrics],
                     output_path=metrics_path,
-                    confidence=0.95,
-                    n_bootstrap=1_000,
+                    confidence=config_handler.confidence_level,
+                    n_bootstrap=config_handler.n_bootstrap,
                     random_state=config_handler.seed,
                     y_true_all=y_test.values,
                     y_pred_all=y_pred,
@@ -1275,7 +1237,7 @@ def perform_temporal_validation(
                 # Generate reliability curve for temporal split
                 from respredai.visualization.reliability_curves import save_reliability_curves
 
-                calibration_dir = Path(config_handler.out_folder) / "calibration"
+                calibration_dir = Path(config_handler.out_folder) / DIR_CALIBRATION
                 save_reliability_curves(
                     y_true_list=[y_test.values],
                     y_prob_list=[y_prob[:, 1]],
@@ -1309,7 +1271,7 @@ def perform_temporal_validation(
                 cms=temporal_cms,
                 aurocs=temporal_aurocs,
                 out_dir=config_handler.out_folder,
-                model=f"{model_name.replace(' ', '_')}_temporal",
+                model=f"{sanitize_name(model_name)}_temporal",
             )
 
     if config_handler.verbosity:
@@ -1350,7 +1312,7 @@ def perform_training(
     X = _apply_ohe_and_clean(ohe_transformer, X)
 
     # Create output directories
-    trained_models_dir = Path(config_handler.out_folder) / "trained_models"
+    trained_models_dir = Path(config_handler.out_folder) / DIR_TRAINED_MODELS
     trained_models_dir.mkdir(parents=True, exist_ok=True)
 
     # Store metadata for evaluation
@@ -1390,19 +1352,7 @@ def perform_training(
             y = Y[target]
 
             # Get pipeline components
-            transformer, grid = get_pipeline(
-                model_name=model,
-                continuous_cols=datasetter.continuous_features,
-                n_jobs=config_handler.n_jobs,
-                rnd_state=config_handler.seed,
-                inner_folds=config_handler.inner_folds,
-                use_groups=datasetter.groups is not None,
-                imputation_method=config_handler.imputation_method,
-                imputation_strategy=config_handler.imputation_strategy,
-                imputation_n_neighbors=config_handler.imputation_n_neighbors,
-                imputation_estimator=config_handler.imputation_estimator,
-                calibrate_probabilities=config_handler.calibrate_probabilities,
-            )
+            transformer, grid = _get_pipeline_for_model(model, config_handler, datasetter)
 
             # Scale features
             X_scaled = transformer.fit_transform(X)
@@ -1418,25 +1368,15 @@ def perform_training(
             best_params = grid.best_params_
 
             # Post-hoc probability calibration (if enabled)
+            prob_calib_splits = None
             if config_handler.calibrate_probabilities:
-                if datasetter.groups is not None:
-                    prob_calib_cv = StratifiedGroupKFold(
-                        n_splits=config_handler.probability_calibration_cv,
-                        shuffle=True,
-                        random_state=config_handler.seed,
-                    )
-                    prob_calib_splits = list(prob_calib_cv.split(X_scaled, y, datasetter.groups))
-                else:
-                    prob_calib_splits = config_handler.probability_calibration_cv
-
-                calibrated_classifier = CalibratedClassifierCV(
-                    estimator=best_estimator,
-                    method=config_handler.probability_calibration_method,
-                    cv=prob_calib_splits,
-                    n_jobs=1,
+                best_estimator, prob_calib_splits = _apply_probability_calibration(
+                    best_estimator,
+                    config_handler,
+                    X_scaled,
+                    y,
+                    groups=datasetter.groups,
                 )
-                calibrated_classifier.fit(X_scaled, y)
-                best_estimator = calibrated_classifier
 
                 if config_handler.verbosity == 2:
                     config_handler.logger.info(
@@ -1445,105 +1385,18 @@ def perform_training(
                     )
 
             # Threshold optimization
-            best_threshold = 0.5
+            best_threshold = DEFAULT_THRESHOLD
             if config_handler.calibrate_threshold:
-                threshold_method = config_handler.threshold_method
-                if threshold_method == "auto":
-                    # Heuristic: OOF is more efficient for smaller datasets;
-                    # CV wraps the full estimator and is more robust for larger ones.
-                    # With <1000 samples, TunedThresholdClassifierCV's internal CV
-                    # reduces effective training size significantly.
-                    threshold_method = "oof" if len(y) < 1000 else "cv"
-
-                if threshold_method == "oof":
-                    # Method 1: Out-of-Fold (OOF) predictions approach
-                    if datasetter.groups is not None:
-                        inner_cv = StratifiedGroupKFold(
-                            n_splits=config_handler.inner_folds,
-                            shuffle=True,
-                            random_state=config_handler.seed,
-                        )
-                        cv_fit_params = {"groups": datasetter.groups}
-                    else:
-                        inner_cv = StratifiedKFold(
-                            n_splits=config_handler.inner_folds,
-                            shuffle=True,
-                            random_state=config_handler.seed,
-                        )
-                        cv_fit_params = {}
-
-                    # Get OOF predictions using the (possibly calibrated)
-                    # estimator so threshold is optimized in the same
-                    # probability space it will be applied in.
-                    y_pred_proba_oof = cross_val_predict(
-                        best_estimator,
-                        X_scaled,
-                        y,
-                        cv=inner_cv,
-                        method="predict_proba",
-                        **cv_fit_params,
-                    )[:, 1]
-
-                    # Find optimal threshold using configured objective
-                    from respredai.core.metrics import get_threshold_scorer
-
-                    threshold_scorer = get_threshold_scorer(
-                        config_handler.threshold_objective,
-                        config_handler.vme_cost,
-                        config_handler.me_cost,
-                    )
-
-                    _, _, thresholds = roc_curve(y, y_pred_proba_oof)
-
-                    best_score = float("-inf")
-                    best_threshold = 0.5
-                    for thresh in thresholds:
-                        y_pred_thresh = (y_pred_proba_oof >= thresh).astype(int)
-                        score = threshold_scorer(y.values, y_pred_thresh)
-                        if score > best_score:
-                            best_score = score
-                            best_threshold = thresh
-
-                else:  # threshold_method == "cv"
-                    # Method 2: TunedThresholdClassifierCV approach
-                    from respredai.core.metrics import get_threshold_scorer
-
-                    threshold_scorer_fn = get_threshold_scorer(
-                        config_handler.threshold_objective,
-                        config_handler.vme_cost,
-                        config_handler.me_cost,
-                    )
-                    objective_scorer = make_scorer(threshold_scorer_fn)
-
-                    # Set best hyperparameters on the unfitted estimator
-                    grid.estimator.set_params(**best_params)
-
-                    # Use group-aware CV when groups are specified
-                    if datasetter.groups is not None:
-                        inner_tuner_cv = StratifiedGroupKFold(
-                            n_splits=config_handler.inner_folds,
-                            shuffle=True,
-                            random_state=config_handler.seed,
-                        )
-                    else:
-                        inner_tuner_cv = StratifiedKFold(
-                            n_splits=config_handler.inner_folds,
-                            shuffle=True,
-                            random_state=config_handler.seed,
-                        )
-
-                    tuned_model = TunedThresholdClassifierCV(
-                        estimator=grid.estimator,
-                        cv=inner_tuner_cv,
-                        scoring=objective_scorer,
-                        n_jobs=1,
-                    )
-                    fit_kwargs = {}
-                    if datasetter.groups is not None:
-                        fit_kwargs["groups"] = datasetter.groups
-                    tuned_model.fit(X_scaled, y, **fit_kwargs)
-                    best_estimator = tuned_model
-                    best_threshold = tuned_model.best_threshold_
+                best_estimator, best_threshold, _ = _optimize_threshold(
+                    best_estimator,
+                    config_handler,
+                    X_scaled,
+                    y,
+                    grid_estimator=grid.estimator,
+                    best_params=best_params,
+                    groups=datasetter.groups,
+                    prob_calib_splits=prob_calib_splits,
+                )
 
             # Save model bundle
             model_bundle = {
@@ -1560,8 +1413,8 @@ def perform_training(
                 "uncertainty_margin": config_handler.uncertainty_margin,
             }
 
-            model_safe = model.replace(" ", "_")
-            target_safe = target.replace(" ", "_")
+            model_safe = sanitize_name(model)
+            target_safe = sanitize_name(target)
             model_path = trained_models_dir / f"{model_safe}_{target_safe}.joblib"
             joblib.dump(model_bundle, model_path, compress=3)
 
@@ -1575,7 +1428,7 @@ def perform_training(
             progress_callback.complete_model(model)
 
     # Save metadata
-    metadata_path = trained_models_dir / "training_metadata.json"
+    metadata_path = trained_models_dir / FILE_TRAINING_METADATA
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
 
@@ -1623,7 +1476,7 @@ def perform_evaluation(
         Evaluation results keyed by 'model_target' with metrics dictionary.
     """
     # Load training metadata
-    metadata_path = models_dir / "training_metadata.json"
+    metadata_path = models_dir / FILE_TRAINING_METADATA
     if not metadata_path.exists():
         raise FileNotFoundError(f"Training metadata not found: {metadata_path}")
 
@@ -1651,8 +1504,8 @@ def perform_evaluation(
 
     # Create output directories
     output_dir = Path(output_dir)
-    metrics_dir = output_dir / "metrics"
-    predictions_dir = output_dir / "predictions"
+    metrics_dir = output_dir / DIR_METRICS
+    predictions_dir = output_dir / DIR_PREDICTIONS
     metrics_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1698,8 +1551,8 @@ def perform_evaluation(
         results[f"{model_name}_{target_name}"] = metrics
 
         # Save predictions with uncertainty
-        model_safe = model_name.replace(" ", "_")
-        target_safe = target_name.replace(" ", "_")
+        model_safe = sanitize_name(model_name)
+        target_safe = sanitize_name(target_name)
 
         # Calculate uncertainty scores
         from respredai.core.metrics import calculate_uncertainty
@@ -1742,7 +1595,7 @@ def perform_evaluation(
     # Save evaluation summary
     if all_summaries:
         summary_df = pd.DataFrame(all_summaries)
-        summary_path = output_dir / "evaluation_summary.csv"
+        summary_path = output_dir / FILE_EVALUATION_SUMMARY
         summary_df.to_csv(summary_path, index=False)
 
     return results

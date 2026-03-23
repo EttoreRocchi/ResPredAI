@@ -305,10 +305,12 @@ def bootstrap_ci_samples(
     random_state: int = 42,
 ) -> tuple:
     """
-    Calculate bootstrap confidence interval at the sample level.
+    Calculate BCa bootstrap confidence interval at the sample level.
 
-    This method provides more reliable CIs by bootstrapping on individual
-    sample predictions rather than fold-level aggregated metrics.
+    Uses the bias-corrected and accelerated (BCa) bootstrap method via
+    ``scipy.stats.bootstrap`` for improved coverage compared to the
+    percentile method, especially for small samples (n < 100) and
+    bounded/skewed metric distributions (AUROC near 0 or 1, Brier near 0).
 
     Parameters
     ----------
@@ -334,57 +336,60 @@ def bootstrap_ci_samples(
 
     Notes
     -----
-    Uses percentile bootstrap which may have under-coverage for small samples
-    (n < 100) or highly skewed metric distributions. For improved coverage,
-    consider BCa (bias-corrected and accelerated) bootstrap.
     Ref: Efron, B. "Better Bootstrap Confidence Intervals", JASA, 1987.
+
+    For metrics requiring both classes (AUROC, MCC), an uninformative
+    baseline value is returned when only one class is present in a bootstrap
+    sample, avoiding optimistic bias from discarding single-class samples.
     """
-    rng = np.random.default_rng(random_state)
-    n = len(y_true)
+    from scipy.stats import bootstrap as scipy_bootstrap
 
-    bootstrap_metrics = []
-    n_failures = 0
-    for _ in range(n_bootstrap):
-        indices = rng.choice(n, size=n, replace=True)
-        y_true_boot = y_true[indices]
+    # Flatten y_prob to 1D (class-1 probabilities) so all arrays have the
+    # same shape, avoiding scipy's broadcast warning. The 2D array is
+    # reconstructed inside the statistic function.
+    y_prob_1d = y_prob[:, 1] if y_prob.ndim == 2 else y_prob
 
-        # For metrics requiring both classes (AUROC, MCC), assign an
-        # uninformative baseline value when only one class is present.
-        # This avoids optimistic bias from discarding single-class samples,
-        # which disproportionately affects imbalanced datasets.
-        if len(np.unique(y_true_boot)) < 2 and metric_fn in _SINGLE_CLASS_DEFAULTS:
-            bootstrap_metrics.append(_SINGLE_CLASS_DEFAULTS[metric_fn])
-            continue
+    def _statistic(y_true_b, y_pred_b, y_prob_1d_b, axis=None):
+        # Handle single-class bootstrap samples with uninformative defaults
+        if len(np.unique(y_true_b)) < 2 and metric_fn in _SINGLE_CLASS_DEFAULTS:
+            return _SINGLE_CLASS_DEFAULTS[metric_fn]
 
-        y_pred_boot = y_pred[indices]
-        y_prob_boot = y_prob[indices]
-
-        # Calculate metric on bootstrap sample
+        y_prob_b = np.column_stack([1 - y_prob_1d_b, y_prob_1d_b])
         try:
-            metric_value = metric_fn(y_true_boot, y_pred_boot, y_prob_boot)
-            if not np.isnan(metric_value):
-                bootstrap_metrics.append(metric_value)
+            value = metric_fn(y_true_b, y_pred_b, y_prob_b)
+            return value if not np.isnan(value) else np.nan
         except Exception:
-            n_failures += 1
-            continue
+            return np.nan
 
-    if n_failures > 0.05 * n_bootstrap:
+    try:
+        result = scipy_bootstrap(
+            (y_true, y_pred, y_prob_1d),
+            statistic=_statistic,
+            n_resamples=n_bootstrap,
+            confidence_level=confidence,
+            method="BCa",
+            random_state=random_state,
+            paired=True,
+            vectorized=False,
+        )
+        lower = float(result.confidence_interval.low)
+        upper = float(result.confidence_interval.high)
+
+        if np.isnan(lower) or np.isnan(upper):
+            warnings.warn(
+                "Bootstrap CI: BCa method returned NaN - returning NaN bounds",
+                stacklevel=2,
+            )
+            return np.nan, np.nan
+
+        return lower, upper
+
+    except Exception as exc:
         warnings.warn(
-            f"Bootstrap CI: {n_failures}/{n_bootstrap} iterations failed (>{5}%)",
+            f"Bootstrap CI: BCa method failed ({exc}) - returning NaN bounds",
             stacklevel=2,
         )
-
-    if len(bootstrap_metrics) == 0:
         return np.nan, np.nan
-
-    bootstrap_metrics = np.array(bootstrap_metrics)
-
-    # Calculate percentiles for CI
-    alpha = (1 - confidence) / 2
-    lower = np.percentile(bootstrap_metrics, alpha * 100)
-    upper = np.percentile(bootstrap_metrics, (1 - alpha) * 100)
-
-    return lower, upper
 
 
 def save_metrics_summary(
@@ -470,12 +475,26 @@ def save_metrics_summary(
         ci_lower.append(lower)
         ci_upper.append(upper)
 
+    # Nadeau-Bengio corrected standard error
+    # Accounts for training set overlap in k-fold CV: SE includes a
+    # correction factor (1/k + n_test/n_train) that inflates the variance
+    # to reflect the non-independence of fold estimates.
+    if n_folds > 0:
+        n_test_frac = 1.0 / n_folds
+        n_train_frac = 1.0 - n_test_frac
+        correction = n_test_frac + (n_test_frac / n_train_frac)
+        n_effective = n_repeats if n_repeats > 1 else n_folds
+        se = np.sqrt(correction * (std**2) / n_effective)
+    else:
+        se = std  # fallback: no fold info available
+
     ci_pct = int(confidence * 100)
     summary_df = pd.DataFrame(
         {
             "Metric": df_metrics.columns,
             "Mean": mean.values,
             "Std": std.values,
+            "SE": se.values,
             f"CI{ci_pct}_lower": ci_lower,
             f"CI{ci_pct}_upper": ci_upper,
         }

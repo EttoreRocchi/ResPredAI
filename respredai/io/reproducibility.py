@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import respredai
+from respredai.core.constants import FILE_REPRODUCIBILITY
 
 
 def get_package_versions() -> dict:
@@ -124,7 +125,7 @@ def save_reproducibility_manifest(manifest: dict, output_dir: Path) -> Path:
     Path
         Path to saved manifest file.
     """
-    output_path = output_dir / "reproducibility.json"
+    output_path = output_dir / FILE_REPRODUCIBILITY
     with open(output_path, "w") as f:
         json.dump(manifest, f, indent=2, default=str)
     return output_path

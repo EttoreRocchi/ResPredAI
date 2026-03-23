@@ -104,6 +104,12 @@ The ``train`` command uses the same configuration file as ``run``, but some para
    * - ``probability_calibration_cv``
      - Yes
      - CV folds for probability calibration
+   * - ``confidence_level``
+     - Yes
+     - Confidence level for bootstrap CIs
+   * - ``n_bootstrap``
+     - Yes
+     - Number of bootstrap resamples for CIs
    * - ``seed``
      - Yes
      - Random seed for reproducibility

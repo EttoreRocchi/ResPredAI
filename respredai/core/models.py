@@ -1,12 +1,20 @@
 """Model I/O utilities for ResPredAI."""
 
-import re
 import warnings
 from pathlib import Path
 from typing import Optional
 
 import joblib
 import pandas as pd
+
+from respredai.core.constants import (
+    DIR_METRICS,
+    DIR_MODELS,
+    FILE_SUMMARY,
+    FILE_SUMMARY_ALL,
+    sanitize_metric_name,
+    sanitize_name,
+)
 
 
 def generate_summary_report(output_folder: str, models: list, targets: list) -> None:
@@ -22,16 +30,16 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
     targets : list
         Target names.
     """
-    metrics_dir = Path(output_folder) / "metrics"
+    metrics_dir = Path(output_folder) / DIR_METRICS
     all_summaries = []
 
     for target in targets:
-        target_safe = re.sub(r"[^\w.-]", "_", target)
+        target_safe = sanitize_name(target)
         target_dir = metrics_dir / target_safe
         target_rows = []
 
         for model in models:
-            model_safe = re.sub(r"[^\w.-]", "_", model)
+            model_safe = sanitize_name(model)
             metrics_file = target_dir / f"{model_safe}_metrics_detailed.csv"
 
             if not metrics_file.exists():
@@ -41,10 +49,10 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
             row = {"Model": model, "Target": target}
 
             for _, metric_row in df.iterrows():
-                metric_name = re.sub(r"[^\w]", "_", re.sub(r"[()]", "", metric_row["Metric"]))
+                metric_name = sanitize_metric_name(metric_row["Metric"])
                 mean_val = metric_row["Mean"]
-                std_val = metric_row["Std"]
-                row[metric_name] = f"{mean_val:.3f}±{std_val:.3f}"
+                se_val = metric_row.get("SE", metric_row["Std"])
+                row[metric_name] = f"{mean_val:.3f}±{se_val:.3f}"
 
             target_rows.append(row)
             all_summaries.append(row)
@@ -53,7 +61,7 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
         if target_rows:
             target_summary_df = pd.DataFrame(target_rows)
             target_summary_df = target_summary_df.drop(columns=["Target"])
-            target_summary_path = target_dir / "summary.csv"
+            target_summary_path = target_dir / FILE_SUMMARY
             target_summary_df.to_csv(target_summary_path, index=False)
 
     # Save global summary
@@ -63,7 +71,7 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
             c for c in all_summary_df.columns if c not in ["Model", "Target"]
         ]
         all_summary_df = all_summary_df[cols]
-        all_summary_path = metrics_dir / "summary_all.csv"
+        all_summary_path = metrics_dir / FILE_SUMMARY_ALL
         all_summary_df.to_csv(all_summary_path, index=False)
 
 
@@ -85,9 +93,9 @@ def get_model_path(output_folder: str, model: str, target: str) -> Path:
     Path
         Path to the model file
     """
-    model_safe = re.sub(r"[^\w.-]", "_", model)
-    target_safe = re.sub(r"[^\w.-]", "_", target)
-    models_dir = Path(output_folder) / "models"
+    model_safe = sanitize_name(model)
+    target_safe = sanitize_name(target)
+    models_dir = Path(output_folder) / DIR_MODELS
     return models_dir / f"{model_safe}_{target_safe}_models.joblib"
 
 

@@ -1,6 +1,5 @@
 """Confusion matrix visualization and saving."""
 
-import re
 from pathlib import Path
 
 import matplotlib
@@ -10,6 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+from respredai.core.constants import DIR_CONFUSION_MATRICES, sanitize_name
 
 
 def save_cm(
@@ -43,14 +44,14 @@ def save_cm(
     List[Path]
         List of paths to saved PNG files
     """
-    confusion_matrices_dir = Path(out_dir) / "confusion_matrices"
+    confusion_matrices_dir = Path(out_dir) / DIR_CONFUSION_MATRICES
     confusion_matrices_dir.mkdir(parents=True, exist_ok=True)
 
-    model_safe = re.sub(r"[^\w.-]", "_", model)
+    model_safe = sanitize_name(model)
     saved_paths = []
 
     for target in cms.keys():
-        target_safe = re.sub(r"[^\w.-]", "_", target)
+        target_safe = sanitize_name(target)
 
         fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
 
