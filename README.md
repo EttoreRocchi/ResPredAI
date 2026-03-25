@@ -76,7 +76,11 @@ Edit `my_config.ini` with your data paths and parameters:
 data_path = ./data/my_data.csv
 targets = Target1,Target2
 continuous_features = Feature1,Feature2,Feature3
-# group_column = PatientID  # Optional: prevents data leakage when you have multiple samples per patient
+
+[Metadata]
+# group_column = PatientID  # Optional: prevents data leakage in CV
+# temporal_column = collection_date  # Date column for temporal validation
+# subgroup_columns = ward, sex  # Columns for subgroup performance analysis
 
 [Pipeline]
 models = LR,RF,XGB,CatBoost
@@ -134,10 +138,11 @@ out_folder = ./output/
 [Validation]
 # Validation strategy: cv (default), temporal (prospective-style), or both
 validation_strategy = cv
-# temporal_split_column = collection_date  # Date column for temporal split
 # temporal_split_date = 2023-01-01  # Cutoff date (train < date, test >= date)
 # temporal_split_ratio = 0.8  # Alternative: fraction for training (by date order)
 ```
+
+> **Tip:** Comment out optional parameters with `#` to disable them. Empty values (e.g., `group_column =`) are treated as absent.
 
 ### 3. Run the pipeline
 
@@ -277,6 +282,9 @@ output_folder/
 │   └── {target_name}/
 │       ├── {model_name}_feature_importance.csv    # Importance values
 │       └── {model_name}_feature_importance.png    # Barplot visualization
+├── subgroup_analysis/                               # Subgroup performance metrics (if configured)
+│   └── {target_name}/
+│       └── {model_name}_{subgroup_col}_subgroup.csv
 ├── confusion_matrices/                             # Confusion matrix heatmaps
 │   └── Confusion_matrix_{model_name}_{target_name}.png
 ├── report.html                                     # Comprehensive HTML report (includes calibration section)

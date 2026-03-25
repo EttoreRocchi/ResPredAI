@@ -23,7 +23,11 @@ Open ``my_config.ini`` and customize it for your data:
     data_path = ./data/my_data.csv
     targets = Target1,Target2
     continuous_features = Feature1,Feature2,Feature3
-    # group_column = PatientID  # Optional: prevents data leakage
+
+    [Metadata]
+    # group_column = PatientID  # Optional: prevents data leakage in CV
+    # temporal_column = collection_date  # Date column for temporal validation
+    # subgroup_columns = ward, sex  # Columns for subgroup performance analysis
 
     [Pipeline]
     models = LR,RF,XGB,CatBoost
@@ -62,7 +66,6 @@ Open ``my_config.ini`` and customize it for your data:
 
     # [Validation]
     # validation_strategy = cv
-    # temporal_split_column = collection_date
     # temporal_split_date = 2023-01-01
 
 Configuration Sections
@@ -76,6 +79,8 @@ Configuration Sections
      - Description
    * - ``[Data]``
      - Input data path, target columns, feature types
+   * - ``[Metadata]``
+     - Metadata columns for grouping, temporal splitting, and subgroup analysis
    * - ``[Pipeline]``
      - Models to train, CV folds, threshold optimization and probability calibration
    * - ``[Reproducibility]``

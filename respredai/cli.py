@@ -55,38 +55,47 @@ def print_config_info(config_handler: ConfigHandler) -> None:
     table.add_column("Parameter", style="cyan", width=25)
     table.add_column("Value", style="green")
 
-    table.add_row("Data Path", str(config_handler.data_path))
-    table.add_row("Targets", ", ".join(config_handler.targets))
+    table.add_row("Data Path", str(config_handler.data_cfg.data_path))
+    table.add_row("Targets", ", ".join(config_handler.data_cfg.targets))
     table.add_row(
-        "Group Column", str(config_handler.group_column) if config_handler.group_column else "None"
+        "Group Column",
+        str(config_handler.metadata.group_column)
+        if config_handler.metadata.group_column
+        else "None",
     )
-    table.add_row("Models", ", ".join(config_handler.models))
-    table.add_row("Outer Folds", str(config_handler.outer_folds))
-    table.add_row("Inner Folds", str(config_handler.inner_folds))
-    table.add_row("Threshold Optimization", str(config_handler.calibrate_threshold))
-    if config_handler.calibrate_threshold:
-        table.add_row("  Threshold Method", config_handler.threshold_method.upper())
-        table.add_row("  Threshold Objective", config_handler.threshold_objective)
-        if config_handler.threshold_objective == "cost_sensitive":
-            table.add_row("  VME Cost", str(config_handler.vme_cost))
-            table.add_row("  ME Cost", str(config_handler.me_cost))
-    table.add_row("Probability Calibration", str(config_handler.calibrate_probabilities))
-    if config_handler.calibrate_probabilities:
-        table.add_row("  Calibration Method", config_handler.probability_calibration_method)
-        table.add_row("  Calibration CV Folds", str(config_handler.probability_calibration_cv))
-    if config_handler.outer_cv_repeats > 1:
-        table.add_row("Outer CV Repeats", str(config_handler.outer_cv_repeats))
-    table.add_row("Random Seed", str(config_handler.seed))
-    table.add_row("Parallel Jobs", str(config_handler.n_jobs))
-    table.add_row("Output Folder", str(config_handler.out_folder))
-    table.add_row("Model Saving Enabled", str(config_handler.save_models_enable))
-    table.add_row("Validation Strategy", config_handler.validation_strategy.upper())
-    if config_handler.validation_strategy in ("temporal", "both"):
-        table.add_row("  Temporal Column", str(config_handler.temporal_split_column))
-        if config_handler.temporal_split_date:
-            table.add_row("  Temporal Split Date", config_handler.temporal_split_date)
-        if config_handler.temporal_split_ratio:
-            table.add_row("  Temporal Split Ratio", str(config_handler.temporal_split_ratio))
+    table.add_row("Models", ", ".join(config_handler.pipeline.models))
+    table.add_row("Outer Folds", str(config_handler.pipeline.outer_folds))
+    table.add_row("Inner Folds", str(config_handler.pipeline.inner_folds))
+    table.add_row("Threshold Optimization", str(config_handler.pipeline.calibrate_threshold))
+    if config_handler.pipeline.calibrate_threshold:
+        table.add_row("  Threshold Method", config_handler.pipeline.threshold_method.upper())
+        table.add_row("  Threshold Objective", config_handler.pipeline.threshold_objective)
+        if config_handler.pipeline.threshold_objective == "cost_sensitive":
+            table.add_row("  VME Cost", str(config_handler.pipeline.vme_cost))
+            table.add_row("  ME Cost", str(config_handler.pipeline.me_cost))
+    table.add_row("Probability Calibration", str(config_handler.pipeline.calibrate_probabilities))
+    if config_handler.pipeline.calibrate_probabilities:
+        table.add_row(
+            "  Calibration Method", config_handler.pipeline.probability_calibration_method
+        )
+        table.add_row(
+            "  Calibration CV Folds", str(config_handler.pipeline.probability_calibration_cv)
+        )
+    if config_handler.pipeline.outer_cv_repeats > 1:
+        table.add_row("Outer CV Repeats", str(config_handler.pipeline.outer_cv_repeats))
+    table.add_row("Random Seed", str(config_handler.reproducibility_cfg.seed))
+    table.add_row("Parallel Jobs", str(config_handler.reproducibility_cfg.n_jobs))
+    table.add_row("Output Folder", str(config_handler.output.out_folder))
+    table.add_row("Model Saving Enabled", str(config_handler.output.save_models_enable))
+    table.add_row("Validation Strategy", config_handler.validation.strategy.upper())
+    if config_handler.validation.strategy in ("temporal", "both"):
+        table.add_row("  Temporal Column", str(config_handler.metadata.temporal_column))
+        if config_handler.validation.temporal_split_date:
+            table.add_row("  Temporal Split Date", config_handler.validation.temporal_split_date)
+        if config_handler.validation.temporal_split_ratio:
+            table.add_row(
+                "  Temporal Split Ratio", str(config_handler.validation.temporal_split_ratio)
+            )
 
     console.print(table)
 
@@ -401,7 +410,7 @@ def _load_config_with_error_handling(config_path: Path) -> ConfigHandler:
 
 def _load_data_with_error_handling(config_handler: ConfigHandler) -> DataSetter:
     """Load data with user-friendly error handling."""
-    data_path = Path(config_handler.data_path)
+    data_path = Path(config_handler.data_cfg.data_path)
 
     if not data_path.exists():
         console.print(
@@ -437,17 +446,19 @@ def _apply_cli_overrides(
 ) -> None:
     """Apply CLI option overrides to config_handler and print feedback."""
     if models:
-        config_handler.models = [m.strip() for m in models.split(",")]
-        console.print(f"[dim]Override: models = {', '.join(config_handler.models)}[/dim]")
+        config_handler.pipeline.models = [m.strip() for m in models.split(",")]
+        console.print(f"[dim]Override: models = {', '.join(config_handler.pipeline.models)}[/dim]")
     if targets:
-        config_handler.targets = [t.strip() for t in targets.split(",")]
-        console.print(f"[dim]Override: targets = {', '.join(config_handler.targets)}[/dim]")
+        config_handler.data_cfg.targets = [t.strip() for t in targets.split(",")]
+        console.print(
+            f"[dim]Override: targets = {', '.join(config_handler.data_cfg.targets)}[/dim]"
+        )
     if output:
-        config_handler.out_folder = str(output)
-        console.print(f"[dim]Override: output = {config_handler.out_folder}[/dim]")
+        config_handler.output.out_folder = str(output)
+        console.print(f"[dim]Override: output = {config_handler.output.out_folder}[/dim]")
     if seed is not None:
-        config_handler.seed = seed
-        console.print(f"[dim]Override: seed = {config_handler.seed}[/dim]")
+        config_handler.reproducibility_cfg.seed = seed
+        console.print(f"[dim]Override: seed = {config_handler.reproducibility_cfg.seed}[/dim]")
 
 
 @app.command(rich_help_panel="Configuration")
@@ -481,7 +492,7 @@ def validate_config(
             f"{datasetter.X.shape[0]} samples, {datasetter.X.shape[1]} features"
         )
         console.print(f"[bold green]✓[/bold green] Targets: {', '.join(datasetter.targets)}")
-        if config_handler.group_column:
+        if config_handler.metadata.group_column:
             n_groups = len(set(datasetter.groups))
             console.print(f"[bold green]✓[/bold green] Groups: {n_groups} unique groups")
 
@@ -541,7 +552,7 @@ def run(
                 "[bold red]Error:[/bold red] --validation-strategy must be cv, temporal, or both"
             )
             raise typer.Exit(code=1)
-        config_handler.validation_strategy = vs
+        config_handler.validation.strategy = vs
         console.print(f"[dim]Override: validation_strategy = {vs}[/dim]")
 
     if not quiet:
@@ -558,11 +569,11 @@ def run(
         f"{datasetter.X.shape[1]} features"
     )
 
-    Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
+    Path(config_handler.output.out_folder).mkdir(parents=True, exist_ok=True)
 
     progress_callback = TrainingProgressCallback(console, quiet)
 
-    strategy = config_handler.validation_strategy
+    strategy = config_handler.validation.strategy
 
     # Run CV pipeline (for "cv" or "both")
     if strategy in ("cv", "both"):
@@ -570,7 +581,7 @@ def run(
         try:
             perform_pipeline(
                 datasetter=datasetter,
-                models=config_handler.models,
+                models=config_handler.pipeline.models,
                 config_handler=config_handler,
                 progress_callback=progress_callback,
             )
@@ -586,7 +597,7 @@ def run(
         try:
             perform_temporal_validation(
                 datasetter=datasetter,
-                models=config_handler.models,
+                models=config_handler.pipeline.models,
                 config_handler=config_handler,
                 progress_callback=progress_callback,
             )
@@ -598,7 +609,7 @@ def run(
 
     success_panel = Panel(
         f"[bold green]✓ Pipeline completed successfully![/bold green]\n\n"
-        f"Results saved to: [cyan]{config_handler.out_folder}[/cyan]",
+        f"Results saved to: [cyan]{config_handler.output.out_folder}[/cyan]",
         title="Success",
         border_style="green",
     )
@@ -653,7 +664,7 @@ def train(
         f"{datasetter.X.shape[1]} features"
     )
 
-    Path(config_handler.out_folder).mkdir(parents=True, exist_ok=True)
+    Path(config_handler.output.out_folder).mkdir(parents=True, exist_ok=True)
 
     progress_callback = SimpleTrainingProgressCallback(console, quiet) if not quiet else None
 
@@ -661,7 +672,7 @@ def train(
     try:
         perform_training(
             datasetter=datasetter,
-            models=config_handler.models,
+            models=config_handler.pipeline.models,
             config_handler=config_handler,
             progress_callback=progress_callback,
         )
@@ -671,7 +682,7 @@ def train(
             console.print_exception()
         raise typer.Exit(code=1)
 
-    trained_models_dir = Path(config_handler.out_folder) / DIR_TRAINED_MODELS
+    trained_models_dir = Path(config_handler.output.out_folder) / DIR_TRAINED_MODELS
     success_panel = Panel(
         f"[bold green]✓ Training completed successfully![/bold green]\n\n"
         f"Models saved to: [cyan]{trained_models_dir}[/cyan]\n"
@@ -827,7 +838,11 @@ def create_config(
 data_path = ./data/your_data.csv
 targets = Target1,Target2
 continuous_features = Feature1,Feature2,Feature3
-# group_column = PatientID  # Optional: column for grouping samples to prevent data leakage
+
+[Metadata]
+# group_column = PatientID  # Column for grouping samples to prevent data leakage
+# temporal_column = collection_date  # Date column for temporal validation
+# subgroup_columns = ward, sex  # Columns for subgroup performance analysis (comma-separated)
 
 [Pipeline]
 models = LR,RF,XGB
@@ -882,7 +897,6 @@ compression = 3
 # [Validation]
 # Validation strategy: cv (default), temporal (prospective-style), or both
 # validation_strategy = cv
-# temporal_split_column = collection_date  # Date column for temporal split
 # temporal_split_date = 2023-01-01  # Cutoff date (train < date, test >= date)
 # temporal_split_ratio = 0.8  # Alternative: fraction for training (by date order)
 """
@@ -948,6 +962,9 @@ def feature_importance(
     seed: Optional[int] = typer.Option(
         None, "--seed", "-s", help="Random seed for SHAP reproducibility"
     ),
+    direction: bool = typer.Option(
+        False, "--direction", help="Compute signed feature direction (Risk/Protective)"
+    ),
 ):
     """Extract and visualize feature importance/coefficients for a trained model.
 
@@ -981,6 +998,7 @@ def feature_importance(
             save_plot=not no_plot,
             save_csv=not no_csv,
             seed=seed,
+            compute_direction=direction,
         )
 
         if result is None:

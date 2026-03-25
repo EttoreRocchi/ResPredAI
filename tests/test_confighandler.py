@@ -16,6 +16,8 @@ class TestConfigHandler:
         data_path = {data}
         targets = y
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = group
 
         [Pipeline]
@@ -62,13 +64,13 @@ class TestConfigHandler:
 
         config = ConfigHandler(str(config_path))
 
-        assert config.targets == ["y"]
-        assert config.continuous_features == ["age", "bmi"]
-        assert config.models == ["lr", "rf"]
-        assert config.outer_folds == 3
-        assert config.seed == 42
-        assert config.save_models_enable is True
-        assert config.model_compression == 3
+        assert config.data_cfg.targets == ["y"]
+        assert config.data_cfg.continuous_features == ["age", "bmi"]
+        assert config.pipeline.models == ["lr", "rf"]
+        assert config.pipeline.outer_folds == 3
+        assert config.reproducibility_cfg.seed == 42
+        assert config.output.save_models_enable is True
+        assert config.output.model_compression == 3
 
     def test_invalid_model_compression(self, tmp_path):
         """Test that invalid compression values raise an error."""
@@ -78,7 +80,6 @@ class TestConfigHandler:
         data_path = foo.csv
         targets = y
         continuous_features = age
-        group_column =
 
         [Pipeline]
         models = lr
@@ -117,7 +118,6 @@ class TestConfigHandler:
         data_path = foo.csv
         targets = y
         continuous_features = age
-        group_column =
 
         [Pipeline]
         models = lr
@@ -163,8 +163,8 @@ class TestConfigHandler:
 
         config = ConfigHandler(str(config_path))
 
-        assert config.threshold_method == threshold_method
-        assert config.calibrate_threshold is True
+        assert config.pipeline.threshold_method == threshold_method
+        assert config.pipeline.calibrate_threshold is True
 
     def test_model_parsing(self, tmp_path):
         """Test that model names are correctly parsed from config."""
@@ -175,9 +175,9 @@ class TestConfigHandler:
 
         config = ConfigHandler(str(config_path))
 
-        assert "lr" in config.models
-        assert "rf" in config.models
-        assert len(config.models) == 2
+        assert "lr" in config.pipeline.models
+        assert "rf" in config.pipeline.models
+        assert len(config.pipeline.models) == 2
 
 
 class TestThresholdObjectiveConfig:
@@ -226,7 +226,7 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.threshold_objective == objective
+        assert config.pipeline.threshold_objective == objective
 
     def test_invalid_threshold_objective_raises(self, tmp_path):
         """Test that invalid threshold_objective raises ValueError."""
@@ -244,7 +244,7 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.threshold_objective == "youden"
+        assert config.pipeline.threshold_objective == "youden"
 
     def test_cost_weights_parsing(self, tmp_path):
         """Test that vme_cost and me_cost are correctly parsed."""
@@ -255,9 +255,9 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.threshold_objective == "cost_sensitive"
-        assert config.vme_cost == 5.0
-        assert config.me_cost == 2.0
+        assert config.pipeline.threshold_objective == "cost_sensitive"
+        assert config.pipeline.vme_cost == 5.0
+        assert config.pipeline.me_cost == 2.0
 
     def test_default_cost_weights(self, tmp_path):
         """Test that cost weights default to 1.0."""
@@ -266,8 +266,8 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.vme_cost == 1.0
-        assert config.me_cost == 1.0
+        assert config.pipeline.vme_cost == 1.0
+        assert config.pipeline.me_cost == 1.0
 
     def test_invalid_vme_cost_raises(self, tmp_path):
         """Test that non-positive vme_cost raises ValueError."""
@@ -294,7 +294,7 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.uncertainty_margin == 0.15
+        assert config.reproducibility_cfg.uncertainty_margin == 0.15
 
     def test_default_uncertainty_margin(self, tmp_path):
         """Test that uncertainty margin defaults to 0.1."""
@@ -303,7 +303,7 @@ class TestThresholdObjectiveConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.uncertainty_margin == 0.1
+        assert config.reproducibility_cfg.uncertainty_margin == 0.1
 
     def test_invalid_uncertainty_margin_raises(self, tmp_path):
         """Test that out-of-range uncertainty margin raises ValueError."""
@@ -357,7 +357,7 @@ class TestPreprocessingConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.ohe_min_frequency is None
+        assert config.preprocessing.ohe_min_frequency is None
 
     def test_ohe_min_frequency_proportion(self, tmp_path):
         """Test that ohe_min_frequency is correctly parsed as a proportion."""
@@ -366,7 +366,7 @@ class TestPreprocessingConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.ohe_min_frequency == 0.05
+        assert config.preprocessing.ohe_min_frequency == 0.05
 
     def test_ohe_min_frequency_absolute_count(self, tmp_path):
         """Test that ohe_min_frequency >= 1 is converted to int."""
@@ -375,8 +375,8 @@ class TestPreprocessingConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.ohe_min_frequency == 10
-        assert isinstance(config.ohe_min_frequency, int)
+        assert config.preprocessing.ohe_min_frequency == 10
+        assert isinstance(config.preprocessing.ohe_min_frequency, int)
 
     def test_ohe_min_frequency_invalid_zero(self, tmp_path):
         """Test that ohe_min_frequency = 0 raises ValueError."""
@@ -439,7 +439,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.calibrate_probabilities is False
+        assert config.pipeline.calibrate_probabilities is False
 
     def test_calibration_enabled(self, tmp_path):
         """Test that probability calibration can be enabled."""
@@ -448,7 +448,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.calibrate_probabilities is True
+        assert config.pipeline.calibrate_probabilities is True
 
     @pytest.mark.parametrize("method", ["sigmoid", "isotonic"])
     def test_valid_calibration_methods(self, tmp_path, method):
@@ -460,7 +460,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.probability_calibration_method == method
+        assert config.pipeline.probability_calibration_method == method
 
     def test_invalid_calibration_method_raises(self, tmp_path):
         """Test that invalid calibration method raises ValueError."""
@@ -480,7 +480,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.probability_calibration_method == "sigmoid"
+        assert config.pipeline.probability_calibration_method == "sigmoid"
 
     def test_default_calibration_cv(self, tmp_path):
         """Test that calibration CV folds defaults to 5."""
@@ -489,7 +489,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.probability_calibration_cv == 5
+        assert config.pipeline.probability_calibration_cv == 5
 
     def test_custom_calibration_cv(self, tmp_path):
         """Test that custom CV folds can be set."""
@@ -500,7 +500,7 @@ class TestProbabilityCalibrationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.probability_calibration_cv == 3
+        assert config.pipeline.probability_calibration_cv == 3
 
     def test_invalid_calibration_cv_raises(self, tmp_path):
         """Test that CV folds < 2 raises ValueError."""
@@ -556,7 +556,7 @@ class TestRepeatedCVConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.outer_cv_repeats == 1
+        assert config.pipeline.outer_cv_repeats == 1
 
     def test_custom_repeats(self, tmp_path):
         """Test that custom repeats can be set."""
@@ -565,7 +565,7 @@ class TestRepeatedCVConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.outer_cv_repeats == 5
+        assert config.pipeline.outer_cv_repeats == 5
 
     def test_invalid_repeats_zero_raises(self, tmp_path):
         """Test that outer_cv_repeats = 0 raises ValueError."""
@@ -628,23 +628,23 @@ class TestTemporalValidationConfig:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.validation_strategy == "cv"
-        assert config.temporal_split_column is None
-        assert config.temporal_split_date is None
-        assert config.temporal_split_ratio is None
+        assert config.validation.strategy == "cv"
+        assert config.metadata.temporal_column is None
+        assert config.validation.temporal_split_date is None
+        assert config.validation.temporal_split_ratio is None
 
     @pytest.mark.parametrize("strategy", ["cv", "temporal", "both"])
     def test_valid_strategies(self, tmp_path, strategy):
         """Test that all valid strategies are accepted."""
         extra = f"[Validation]\nvalidation_strategy = {strategy}"
         if strategy in ("temporal", "both"):
-            extra += "\ntemporal_split_column = date\ntemporal_split_date = 2023-01-01"
+            extra += "\ntemporal_split_date = 2023-01-01\n\n[Metadata]\ntemporal_column = date"
         config_text = self._make_base_config(extra)
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.validation_strategy == strategy
+        assert config.validation.strategy == strategy
 
     def test_invalid_strategy_raises(self, tmp_path):
         """Test that invalid validation_strategy raises ValueError."""
@@ -656,23 +656,23 @@ class TestTemporalValidationConfig:
             ConfigHandler(str(config_path))
 
     def test_temporal_missing_column_raises(self, tmp_path):
-        """Test that temporal strategy without temporal_split_column raises."""
+        """Test that temporal strategy without temporal_column raises."""
         config_text = self._make_base_config(
             "[Validation]\nvalidation_strategy = temporal\ntemporal_split_date = 2023-01-01"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
-        with pytest.raises(ValueError, match="temporal_split_column is required"):
+        with pytest.raises(ValueError, match="temporal_column is required"):
             ConfigHandler(str(config_path))
 
     def test_temporal_both_date_and_ratio_raises(self, tmp_path):
         """Test that setting both split_date and split_ratio raises."""
         config_text = self._make_base_config(
             "[Validation]\nvalidation_strategy = temporal\n"
-            "temporal_split_column = date\n"
             "temporal_split_date = 2023-01-01\n"
-            "temporal_split_ratio = 0.8"
+            "temporal_split_ratio = 0.8\n\n"
+            "[Metadata]\ntemporal_column = date"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
@@ -683,7 +683,7 @@ class TestTemporalValidationConfig:
     def test_temporal_neither_date_nor_ratio_raises(self, tmp_path):
         """Test that missing both split_date and split_ratio raises."""
         config_text = self._make_base_config(
-            "[Validation]\nvalidation_strategy = temporal\ntemporal_split_column = date"
+            "[Validation]\nvalidation_strategy = temporal\n\n[Metadata]\ntemporal_column = date"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
@@ -696,8 +696,8 @@ class TestTemporalValidationConfig:
         for ratio in ["0", "1", "1.5", "-0.1"]:
             config_text = self._make_base_config(
                 f"[Validation]\nvalidation_strategy = temporal\n"
-                f"temporal_split_column = date\n"
-                f"temporal_split_ratio = {ratio}"
+                f"temporal_split_ratio = {ratio}\n\n"
+                f"[Metadata]\ntemporal_column = date"
             )
             config_path = tmp_path / f"config_{ratio}.ini"
             config_path.write_text(config_text)
@@ -709,8 +709,8 @@ class TestTemporalValidationConfig:
         """Test that unparseable split_date raises."""
         config_text = self._make_base_config(
             "[Validation]\nvalidation_strategy = temporal\n"
-            "temporal_split_column = date\n"
-            "temporal_split_date = not-a-date"
+            "temporal_split_date = not-a-date\n\n"
+            "[Metadata]\ntemporal_column = date"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
@@ -722,29 +722,124 @@ class TestTemporalValidationConfig:
         """Test valid temporal config with split_date."""
         config_text = self._make_base_config(
             "[Validation]\nvalidation_strategy = temporal\n"
-            "temporal_split_column = collection_date\n"
-            "temporal_split_date = 2023-06-15"
+            "temporal_split_date = 2023-06-15\n\n"
+            "[Metadata]\ntemporal_column = collection_date"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.validation_strategy == "temporal"
-        assert config.temporal_split_column == "collection_date"
-        assert config.temporal_split_date == "2023-06-15"
-        assert config.temporal_split_ratio is None
+        assert config.validation.strategy == "temporal"
+        assert config.metadata.temporal_column == "collection_date"
+        assert config.validation.temporal_split_date == "2023-06-15"
+        assert config.validation.temporal_split_ratio is None
 
     def test_temporal_with_ratio(self, tmp_path):
         """Test valid temporal config with split_ratio."""
         config_text = self._make_base_config(
             "[Validation]\nvalidation_strategy = temporal\n"
-            "temporal_split_column = date\n"
-            "temporal_split_ratio = 0.75"
+            "temporal_split_ratio = 0.75\n\n"
+            "[Metadata]\ntemporal_column = date"
         )
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.validation_strategy == "temporal"
-        assert config.temporal_split_ratio == 0.75
-        assert config.temporal_split_date is None
+        assert config.validation.strategy == "temporal"
+        assert config.validation.temporal_split_ratio == 0.75
+        assert config.validation.temporal_split_date is None
+
+
+class TestEmptyValueNormalization:
+    """Verify that empty config values (key =) are normalized to None."""
+
+    def _make_base_config(self, extra_sections=""):
+        return dedent(f"""
+        [Data]
+        data_path = foo.csv
+        targets = y
+        continuous_features = age
+
+        [Pipeline]
+        models = lr
+        outer_folds = 3
+        inner_folds = 2
+
+        [Reproducibility]
+        seed = 42
+
+        [Log]
+        verbosity = 0
+        log_basename = test.log
+
+        [Resources]
+        n_jobs = 1
+
+        [Output]
+        out_folder = out
+
+        [ModelSaving]
+        enable = false
+        compression = 3
+        {extra_sections}
+        """).strip()
+
+    def test_empty_group_column_is_none(self, tmp_path):
+        config_text = self._make_base_config("[Metadata]\ngroup_column =")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.metadata.group_column is None
+
+    def test_empty_temporal_column_is_none(self, tmp_path):
+        config_text = self._make_base_config("[Metadata]\ntemporal_column =")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.metadata.temporal_column is None
+
+    def test_empty_subgroup_columns_is_empty_list(self, tmp_path):
+        config_text = self._make_base_config("[Metadata]\nsubgroup_columns =")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.metadata.subgroup_columns == []
+
+    def test_empty_temporal_split_ratio_is_none(self, tmp_path):
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = cv\ntemporal_split_ratio ="
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation.temporal_split_ratio is None
+
+    def test_empty_temporal_split_date_is_none(self, tmp_path):
+        config_text = self._make_base_config(
+            "[Validation]\nvalidation_strategy = cv\ntemporal_split_date ="
+        )
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.validation.temporal_split_date is None
+
+    def test_empty_ohe_min_frequency_is_none(self, tmp_path):
+        config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency =")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.preprocessing.ohe_min_frequency is None
+
+    def test_whitespace_only_group_column_is_none(self, tmp_path):
+        config_text = self._make_base_config("[Metadata]\ngroup_column =   ")
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(config_text)
+
+        config = ConfigHandler(str(config_path))
+        assert config.metadata.group_column is None

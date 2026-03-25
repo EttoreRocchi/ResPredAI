@@ -29,6 +29,7 @@ DIR_CALIBRATION = "calibration"
 DIR_CONFUSION_MATRICES = "confusion_matrices"
 DIR_FEATURE_IMPORTANCE = "feature_importance"
 DIR_PREDICTIONS = "predictions"
+DIR_SUBGROUP = "subgroup_analysis"
 
 
 FILE_SUMMARY = "summary.csv"
@@ -42,6 +43,10 @@ DEFAULT_CONFIDENCE_LEVEL = 0.95
 DEFAULT_N_BOOTSTRAP = 1_000
 DEFAULT_THRESHOLD = 0.5
 SAMPLE_SIZE_THRESHOLD_DECISION = 1_000
+SUBGROUP_MIN_SAMPLES = 10
+
+TREE_BASED_MODELS = ("RF", "XGB", "CatBoost")
+LINEAR_MODELS = ("LR", "Linear_SVC")
 
 
 def sanitize_name(name: str) -> str:

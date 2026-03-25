@@ -89,17 +89,26 @@ The command creates a file with the following structure:
     [Output]
     out_folder = ./output/
 
+    # [Metadata]
+    # temporal_column = collection_date
+    # group_column = PatientID
+    # subgroup_columns = Ward,Specimen
+
     # [Validation]
     # Validation strategy: cv (default), temporal (prospective-style), or both
     # validation_strategy = cv
-    # temporal_split_column = collection_date
     # temporal_split_date = 2023-01-01
     # temporal_split_ratio = 0.8
 
 Customization Steps
 -------------------
 
-After generating the template, customize it for your data:
+After generating the template, customize it for your data.
+
+.. note::
+
+   Optional parameters can be disabled by commenting out the line with ``#``.
+   Empty values (e.g., ``group_column =``) are treated as absent.
 
 1. Update Data Section
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -110,12 +119,19 @@ After generating the template, customize it for your data:
     data_path = ./path/to/your/data.csv
     targets = AntibioticA,AntibioticB
     continuous_features = Feature1,Feature3,Feature4
+
+    [Metadata]
     # group_column = PatientID  # Optional
+    # subgroup_columns = Ward,Specimen  # Optional
 
 - **data_path**: Path to your CSV file
 - **targets**: Comma-separated list of target columns (binary classification)
 - **continuous_features**: Features to scale with StandardScaler (all others are one-hot encoded)
+
+The ``[Metadata]`` section holds columns that describe sample context but are not used as features:
+
 - **group_column** (optional): Column name for grouping multiple samples from the same patient/subject to prevent data leakage
+- **subgroup_columns** (optional): Comma-separated column names for defining subgroups within groups
 
 2. Select Models
 ~~~~~~~~~~~~~~~~
@@ -334,21 +350,23 @@ The folder will be created if it doesn't exist.
 
 .. code-block:: ini
 
+    [Metadata]
+    # temporal_column = collection_date
+
     [Validation]
     validation_strategy = cv
-    # temporal_split_column = collection_date
     # temporal_split_date = 2023-01-01
     # temporal_split_ratio = 0.8
+
+- **temporal_column** (in ``[Metadata]``): Name of the date/time column for temporal splitting
+
+  - Required when ``validation_strategy`` is ``temporal`` or ``both``
 
 - **validation_strategy**: Validation approach (default: ``cv``)
 
   - ``cv``: Standard nested cross-validation only
   - ``temporal``: Temporal (prospective-style) validation only
   - ``both``: Run both CV and temporal validation
-
-- **temporal_split_column**: Name of the date/time column for temporal splitting
-
-  - Required when ``validation_strategy`` is ``temporal`` or ``both``
 
 - **temporal_split_date**: Cutoff date in ISO format (e.g., ``2023-01-01``)
 
@@ -360,7 +378,7 @@ The folder will be created if it doesn't exist.
   - Must be between 0 and 1 (exclusive)
   - Mutually exclusive with ``temporal_split_date``
 
-**Note:** When ``group_column`` is configured, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
+**Note:** When ``group_column`` is configured in ``[Metadata]``, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
 
 See Also
 --------

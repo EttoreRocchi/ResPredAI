@@ -2,6 +2,7 @@
 
 import logging
 import os
+import warnings
 from collections.abc import Iterable
 from configparser import ConfigParser
 from dataclasses import dataclass, field
@@ -34,7 +35,6 @@ class DataConfig:
     data_path: str = ""
     targets: list[str] = field(default_factory=list)
     continuous_features: list[str] = field(default_factory=list)
-    group_column: Optional[str] = None
 
 
 @dataclass
@@ -55,6 +55,7 @@ class PipelineConfig:
     probability_calibration_cv: int = 5
     confidence_level: float = DEFAULT_CONFIDENCE_LEVEL
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP
+    compute_feature_direction: bool = False
 
 
 @dataclass
@@ -72,7 +73,6 @@ class ValidationConfig:
     """Configuration for validation strategy (CV, temporal, or both)."""
 
     strategy: str = "cv"
-    temporal_split_column: Optional[str] = None
     temporal_split_date: Optional[str] = None
     temporal_split_ratio: Optional[float] = None
 
@@ -104,20 +104,26 @@ class ReproducibilityConfig:
     uncertainty_margin: float = 0.1
 
 
+@dataclass
+class MetadataConfig:
+    """Configuration for metadata columns (grouping, temporal, subgroup)."""
+
+    group_column: Optional[str] = None
+    temporal_column: Optional[str] = None
+    subgroup_columns: list[str] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
-# ConfigHandler - facade with property proxies for backward compatibility
+# ConfigHandler
 # ---------------------------------------------------------------------------
 
 
 class ConfigHandler:
     """Handle configuration file parsing and validation.
 
-    Stores configuration in domain-specific dataclass instances (``data``,
-    ``pipeline``, ``imputation``, ``validation``, ``preprocessing``,
-    ``output``, ``reproducibility``).  For backward compatibility, every
-    attribute is also accessible directly on this class via property proxies
-    (e.g. ``config_handler.outer_folds`` delegates to
-    ``config_handler.pipeline.outer_folds``).
+    Stores configuration in domain-specific dataclass instances accessible
+    as attributes: ``data_cfg``, ``pipeline``, ``imputation``, ``validation``,
+    ``preprocessing``, ``output``, ``reproducibility_cfg``, and ``metadata``.
     """
 
     def __init__(self, config_path: str) -> None:
@@ -137,10 +143,22 @@ class ConfigHandler:
     # Setup & parsing
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _get_optional_str(
+        config: ConfigParser, section: str, key: str, fallback=None
+    ) -> Optional[str]:
+        """Get a string value, normalizing empty/whitespace-only to ``None``."""
+        val = config.get(section, key, fallback=fallback)
+        if val is not None and isinstance(val, str) and not val.strip():
+            return None
+        return val.strip() if isinstance(val, str) and val else val
+
     def initialize_logger(self) -> None:
         """Set up the logger using the current out_folder. Call after any CLI overrides."""
-        if self.verbosity and self.logger is None:
-            self.logger = self._setup_logger(os.path.join(self.out_folder, self.log_basename))
+        if self.reproducibility_cfg.verbosity and self.logger is None:
+            self.logger = self._setup_logger(
+                os.path.join(self.output.out_folder, self.reproducibility_cfg.log_basename)
+            )
 
     def _setup_config(self) -> None:
         """Parse and validate configuration file."""
@@ -153,6 +171,7 @@ class ConfigHandler:
         self._parse_pipeline_section(config)
         self._parse_misc_sections(config)
         self._parse_imputation_section(config)
+        self._parse_metadata_section(config)
         self._parse_validation_section(config)
         self._parse_preprocessing_section(config)
         self._validate_cross_field_constraints()
@@ -165,7 +184,6 @@ class ConfigHandler:
             continuous_features=[
                 f.strip() for f in config.get("Data", "continuous_features").split(",")
             ],
-            group_column=config.get("Data", "group_column", fallback=None),
         )
 
     def _parse_pipeline_section(self, config: ConfigParser) -> None:
@@ -197,6 +215,9 @@ class ConfigHandler:
                 "Pipeline", "confidence_level", fallback=DEFAULT_CONFIDENCE_LEVEL
             ),
             n_bootstrap=config.getint("Pipeline", "n_bootstrap", fallback=DEFAULT_N_BOOTSTRAP),
+            compute_feature_direction=config.getboolean(
+                "Pipeline", "compute_feature_direction", fallback=False
+            ),
         )
 
     def _parse_misc_sections(self, config: ConfigParser) -> None:
@@ -223,23 +244,47 @@ class ConfigHandler:
             estimator=config.get("Imputation", "estimator", fallback="bayesian_ridge").lower(),
         )
 
+    def _parse_metadata_section(self, config: ConfigParser) -> None:
+        """Parse [Metadata] section, with fallback to legacy locations."""
+        if config.has_section("Metadata"):
+            group_col = self._get_optional_str(config, "Metadata", "group_column")
+            temporal_col = self._get_optional_str(config, "Metadata", "temporal_column")
+            subgroup_raw = config.get("Metadata", "subgroup_columns", fallback="")
+            subgroup_cols = [s.strip() for s in subgroup_raw.split(",") if s.strip()]
+        else:
+            # Legacy fallback: read from old locations
+            group_col = self._get_optional_str(config, "Data", "group_column")
+            temporal_col = self._get_optional_str(config, "Validation", "temporal_split_column")
+            subgroup_cols = []
+            if group_col or temporal_col:
+                warnings.warn(
+                    "group_column in [Data] and temporal_split_column in [Validation] are "
+                    "deprecated. Move them to a [Metadata] section as group_column and "
+                    "temporal_column respectively.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
+        self.metadata = MetadataConfig(
+            group_column=group_col,
+            temporal_column=temporal_col,
+            subgroup_columns=subgroup_cols,
+        )
+
     def _parse_validation_section(self, config: ConfigParser) -> None:
         """Parse [Validation] section."""
-        temporal_split_ratio_str = config.get("Validation", "temporal_split_ratio", fallback=None)
+        ratio_str = self._get_optional_str(config, "Validation", "temporal_split_ratio")
         self.validation = ValidationConfig(
             strategy=config.get("Validation", "validation_strategy", fallback="cv").lower(),
-            temporal_split_column=config.get("Validation", "temporal_split_column", fallback=None),
-            temporal_split_date=config.get("Validation", "temporal_split_date", fallback=None),
-            temporal_split_ratio=(
-                float(temporal_split_ratio_str) if temporal_split_ratio_str is not None else None
-            ),
+            temporal_split_date=self._get_optional_str(config, "Validation", "temporal_split_date"),
+            temporal_split_ratio=float(ratio_str) if ratio_str is not None else None,
         )
 
     def _parse_preprocessing_section(self, config: ConfigParser) -> None:
         """Parse [Preprocessing] section."""
-        ohe_min_freq_str = config.get("Preprocessing", "ohe_min_frequency", fallback=None)
+        ohe_min_freq_str = self._get_optional_str(config, "Preprocessing", "ohe_min_frequency")
         if ohe_min_freq_str is not None:
-            ohe_val = config.getfloat("Preprocessing", "ohe_min_frequency")
+            ohe_val = float(ohe_min_freq_str)
             if ohe_val <= 0:
                 raise ValueError(f"ohe_min_frequency must be positive, got {ohe_val}")
             if ohe_val >= 1:
@@ -319,9 +364,9 @@ class ConfigHandler:
                 f"got '{self.validation.strategy}'"
             )
         if self.validation.strategy in ("temporal", "both"):
-            if not self.validation.temporal_split_column:
+            if not self.metadata.temporal_column:
                 raise ValueError(
-                    "temporal_split_column is required when validation_strategy "
+                    "temporal_column is required when validation_strategy "
                     f"is '{self.validation.strategy}'"
                 )
             has_date = self.validation.temporal_split_date is not None
@@ -381,180 +426,29 @@ class ConfigHandler:
         logger.addHandler(handler)
         return logger
 
-    # ------------------------------------------------------------------
-    # Property proxies - backward compatibility for config_handler.attr
-    # ------------------------------------------------------------------
-
-    # --- DataConfig ---
-    @property
-    def data_path(self):
-        return self.data_cfg.data_path
-
-    @property
-    def targets(self):
-        return self.data_cfg.targets
-
-    @targets.setter
-    def targets(self, value):
-        self.data_cfg.targets = value
-
-    @property
-    def continuous_features(self):
-        return self.data_cfg.continuous_features
-
-    @property
-    def group_column(self):
-        return self.data_cfg.group_column
-
-    # --- PipelineConfig ---
-    @property
-    def models(self):
-        return self.pipeline.models
-
-    @models.setter
-    def models(self, value):
-        self.pipeline.models = value
-
-    @property
-    def outer_folds(self):
-        return self.pipeline.outer_folds
-
-    @property
-    def inner_folds(self):
-        return self.pipeline.inner_folds
-
-    @property
-    def outer_cv_repeats(self):
-        return self.pipeline.outer_cv_repeats
-
-    @property
-    def calibrate_threshold(self):
-        return self.pipeline.calibrate_threshold
-
-    @property
-    def threshold_method(self):
-        return self.pipeline.threshold_method
-
-    @property
-    def threshold_objective(self):
-        return self.pipeline.threshold_objective
-
-    @property
-    def vme_cost(self):
-        return self.pipeline.vme_cost
-
-    @property
-    def me_cost(self):
-        return self.pipeline.me_cost
-
-    @property
-    def calibrate_probabilities(self):
-        return self.pipeline.calibrate_probabilities
-
-    @property
-    def probability_calibration_method(self):
-        return self.pipeline.probability_calibration_method
-
-    @property
-    def probability_calibration_cv(self):
-        return self.pipeline.probability_calibration_cv
-
-    @property
-    def confidence_level(self):
-        return self.pipeline.confidence_level
-
-    @property
-    def n_bootstrap(self):
-        return self.pipeline.n_bootstrap
-
-    # --- ImputationConfig ---
-    @property
-    def imputation_method(self):
-        return self.imputation.method
-
-    @property
-    def imputation_strategy(self):
-        return self.imputation.strategy
-
-    @property
-    def imputation_n_neighbors(self):
-        return self.imputation.n_neighbors
-
-    @property
-    def imputation_estimator(self):
-        return self.imputation.estimator
-
-    # --- ValidationConfig ---
-    @property
-    def validation_strategy(self):
-        return self.validation.strategy
-
-    @validation_strategy.setter
-    def validation_strategy(self, value):
-        self.validation.strategy = value
-
-    @property
-    def temporal_split_column(self):
-        return self.validation.temporal_split_column
-
-    @property
-    def temporal_split_date(self):
-        return self.validation.temporal_split_date
-
-    @property
-    def temporal_split_ratio(self):
-        return self.validation.temporal_split_ratio
-
-    # --- PreprocessingConfig ---
-    @property
-    def ohe_min_frequency(self):
-        return self.preprocessing.ohe_min_frequency
-
-    # --- OutputConfig ---
-    @property
-    def out_folder(self):
-        return self.output.out_folder
-
-    @out_folder.setter
-    def out_folder(self, value):
-        self.output.out_folder = value
-
-    @property
-    def save_models_enable(self):
-        return self.output.save_models_enable
-
-    @property
-    def model_compression(self):
-        return self.output.model_compression
-
-    # --- ReproducibilityConfig ---
-    @property
-    def seed(self):
-        return self.reproducibility_cfg.seed
-
-    @seed.setter
-    def seed(self, value):
-        self.reproducibility_cfg.seed = value
-
-    @property
-    def verbosity(self):
-        return self.reproducibility_cfg.verbosity
-
-    @property
-    def log_basename(self):
-        return self.reproducibility_cfg.log_basename
-
-    @property
-    def n_jobs(self):
-        return self.reproducibility_cfg.n_jobs
-
-    @property
-    def uncertainty_margin(self):
-        return self.reproducibility_cfg.uncertainty_margin
-
 
 class DataSetter:
-    """Handle data loading and validation."""
+    """Handle data loading and validation.
+
+    Attributes
+    ----------
+    data : pd.DataFrame
+        Raw loaded dataframe (before dropping metadata columns).
+    X : pd.DataFrame
+        Feature matrix (targets and metadata columns removed).
+    Y : pd.DataFrame
+        Target columns.
+    targets : list[str]
+        Target column names.
+    continuous_features : list[str]
+        Names of continuous features (used for scaling).
+    groups : np.ndarray or None
+        Group labels for group-aware cross-validation.
+    temporal_column_values : pd.Series or None
+        Parsed datetime values for temporal validation splitting.
+    subgroup_data : dict[str, pd.Series]
+        Maps subgroup column names to their values for subgroup analysis.
+    """
 
     data: pd.DataFrame
     X: pd.DataFrame
@@ -563,6 +457,7 @@ class DataSetter:
     continuous_features: list[str]
     groups: Optional[np.ndarray]
     temporal_column_values: Optional[pd.Series]
+    subgroup_data: dict[str, pd.Series]
 
     def __init__(self, config_handler: ConfigHandler) -> None:
         """
@@ -573,46 +468,60 @@ class DataSetter:
         config_handler : ConfigHandler
             Configuration handler with data paths and parameters
         """
-        self.data = self._read_data(config_handler.data_path)
-        self._validate_data(self.data, config_handler.targets, config_handler.imputation_method)
+        self.data = self._read_data(config_handler.data_cfg.data_path)
+        self._validate_data(
+            self.data, config_handler.data_cfg.targets, config_handler.imputation.method
+        )
 
         # Columns to drop from X (targets + metadata columns)
-        cols_to_drop = list(config_handler.targets)
+        cols_to_drop = list(config_handler.data_cfg.targets)
 
         # Extract groups if group_column is specified
         self.groups = None
-        if config_handler.group_column:
-            if config_handler.group_column not in self.data.columns:
+        if config_handler.metadata.group_column:
+            if config_handler.metadata.group_column not in self.data.columns:
                 raise ValueError(
-                    f"Group column '{config_handler.group_column}' not found in data. "
+                    f"Group column '{config_handler.metadata.group_column}' not found in data. "
                     f"Available columns: {list(self.data.columns)}"
                 )
-            self.groups = self.data[config_handler.group_column].values
-            cols_to_drop.append(config_handler.group_column)
+            self.groups = self.data[config_handler.metadata.group_column].values
+            cols_to_drop.append(config_handler.metadata.group_column)
 
         # Extract temporal column if specified
         self.temporal_column_values = None
-        if config_handler.temporal_split_column:
-            if config_handler.temporal_split_column not in self.data.columns:
+        if config_handler.metadata.temporal_column:
+            if config_handler.metadata.temporal_column not in self.data.columns:
                 raise ValueError(
-                    f"Temporal split column '{config_handler.temporal_split_column}' "
+                    f"Temporal column '{config_handler.metadata.temporal_column}' "
                     f"not found in data. Available columns: {list(self.data.columns)}"
                 )
             try:
                 self.temporal_column_values = pd.to_datetime(
-                    self.data[config_handler.temporal_split_column]
+                    self.data[config_handler.metadata.temporal_column]
                 )
             except (ValueError, TypeError) as e:
                 raise ValueError(
-                    f"Could not parse temporal split column "
-                    f"'{config_handler.temporal_split_column}' as dates: {e}"
+                    f"Could not parse temporal column "
+                    f"'{config_handler.metadata.temporal_column}' as dates: {e}"
                 )
-            cols_to_drop.append(config_handler.temporal_split_column)
+            cols_to_drop.append(config_handler.metadata.temporal_column)
+
+        # Extract subgroup columns if specified
+        self.subgroup_data = {}
+        for col in config_handler.metadata.subgroup_columns:
+            if col not in self.data.columns:
+                raise ValueError(
+                    f"Subgroup column '{col}' not found in data. "
+                    f"Available columns: {list(self.data.columns)}"
+                )
+            self.subgroup_data[col] = self.data[col]
+            if col not in cols_to_drop:
+                cols_to_drop.append(col)
 
         self.X = self.data.drop(cols_to_drop, axis=1)
-        self.Y = self.data[config_handler.targets]
-        self.targets = config_handler.targets
-        self.continuous_features = config_handler.continuous_features
+        self.Y = self.data[config_handler.data_cfg.targets]
+        self.targets = config_handler.data_cfg.targets
+        self.continuous_features = config_handler.data_cfg.continuous_features
 
     @staticmethod
     def _read_data(data_path: str) -> pd.DataFrame:

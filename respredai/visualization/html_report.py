@@ -15,6 +15,7 @@ from respredai.core.constants import (
     DIR_CALIBRATION,
     DIR_CONFUSION_MATRICES,
     DIR_METRICS,
+    DIR_SUBGROUP,
     sanitize_metric_name,
     sanitize_name,
 )
@@ -242,7 +243,7 @@ def _get_css_styles() -> str:
 
 def _generate_header(config_handler: Any) -> str:
     """Generate report header."""
-    data_path = getattr(config_handler, "data_path", "N/A")
+    data_path = getattr(config_handler.data_cfg, "data_path", "N/A")
     return f"""
     <header>
         <h1>ResPredAI Analysis Report</h1>
@@ -252,7 +253,7 @@ def _generate_header(config_handler: Any) -> str:
     """
 
 
-def _generate_toc(targets: list[str]) -> str:
+def _generate_toc(targets: list[str], has_subgroup: bool = False) -> str:
     """Generate table of contents."""
     toc_items = [
         '<li><a href="#metadata">1. Run Metadata</a></li>',
@@ -263,11 +264,16 @@ def _generate_toc(targets: list[str]) -> str:
     for i, target in enumerate(targets, 1):
         safe_id = sanitize_name(target)
         toc_items.append(f'<li><a href="#results-{safe_id}">3.{i}. {_esc(target)}</a></li>')
+    toc_items.append("</ul></li>")
+
+    next_num = 4
+    if has_subgroup:
+        toc_items.append(f'<li><a href="#subgroup-analysis">{next_num}. Subgroup Analysis</a></li>')
+        next_num += 1
     toc_items.extend(
         [
-            "</ul></li>",
-            '<li><a href="#confusion-matrices">4. Confusion Matrices</a></li>',
-            '<li><a href="#calibration-diagnostics">5. Calibration Diagnostics</a></li>',
+            f'<li><a href="#confusion-matrices">{next_num}. Confusion Matrices</a></li>',
+            f'<li><a href="#calibration-diagnostics">{next_num + 1}. Calibration Diagnostics</a></li>',
         ]
     )
 
@@ -284,10 +290,10 @@ def _generate_toc(targets: list[str]) -> str:
 def _generate_metadata_section(config_handler: Any) -> str:
     """Generate run metadata section."""
     config_path = getattr(config_handler, "config_path", "N/A")
-    data_path = getattr(config_handler, "data_path", "N/A")
-    out_folder = getattr(config_handler, "out_folder", "N/A")
-    seed = getattr(config_handler, "seed", "N/A")
-    n_jobs = getattr(config_handler, "n_jobs", "N/A")
+    data_path = getattr(config_handler.data_cfg, "data_path", "N/A")
+    out_folder = getattr(config_handler.output, "out_folder", "N/A")
+    seed = getattr(config_handler.reproducibility_cfg, "seed", "N/A")
+    n_jobs = getattr(config_handler.reproducibility_cfg, "n_jobs", "N/A")
 
     return f"""
     <section id="metadata">
@@ -308,29 +314,31 @@ def _generate_metadata_section(config_handler: Any) -> str:
 
 def _generate_framework_summary_section(config_handler: Any) -> str:
     """Generate framework summary section with configuration table."""
-    outer_folds = getattr(config_handler, "outer_folds", "N/A")
-    inner_folds = getattr(config_handler, "inner_folds", "N/A")
-    outer_cv_repeats = getattr(config_handler, "outer_cv_repeats", 1)
-    models = getattr(config_handler, "models", [])
-    targets = getattr(config_handler, "targets", [])
-    calibrate_threshold = getattr(config_handler, "calibrate_threshold", False)
-    threshold_method = getattr(config_handler, "threshold_method", "N/A")
-    imputation_method = getattr(config_handler, "imputation_method", "none")
-    imputation_strategy = getattr(config_handler, "imputation_strategy", "mean")
-    imputation_n_neighbors = getattr(config_handler, "imputation_n_neighbors", 5)
-    imputation_estimator = getattr(config_handler, "imputation_estimator", "bayesian_ridge")
+    outer_folds = getattr(config_handler.pipeline, "outer_folds", "N/A")
+    inner_folds = getattr(config_handler.pipeline, "inner_folds", "N/A")
+    outer_cv_repeats = getattr(config_handler.pipeline, "outer_cv_repeats", 1)
+    models = getattr(config_handler.pipeline, "models", [])
+    targets = getattr(config_handler.data_cfg, "targets", [])
+    calibrate_threshold = getattr(config_handler.pipeline, "calibrate_threshold", False)
+    threshold_method = getattr(config_handler.pipeline, "threshold_method", "N/A")
+    imputation_method = getattr(config_handler.imputation, "method", "none")
+    imputation_strategy = getattr(config_handler.imputation, "strategy", "mean")
+    imputation_n_neighbors = getattr(config_handler.imputation, "n_neighbors", 5)
+    imputation_estimator = getattr(config_handler.imputation, "estimator", "bayesian_ridge")
 
     # Probability calibration settings
-    calibrate_probabilities = getattr(config_handler, "calibrate_probabilities", False)
-    prob_calibration_method = getattr(config_handler, "probability_calibration_method", "sigmoid")
-    prob_calibration_cv = getattr(config_handler, "probability_calibration_cv", 5)
+    calibrate_probabilities = getattr(config_handler.pipeline, "calibrate_probabilities", False)
+    prob_calibration_method = getattr(
+        config_handler.pipeline, "probability_calibration_method", "sigmoid"
+    )
+    prob_calibration_cv = getattr(config_handler.pipeline, "probability_calibration_cv", 5)
 
     models_str = ", ".join(models) if models else "N/A"
     targets_str = ", ".join(targets) if targets else "N/A"
 
-    threshold_objective = getattr(config_handler, "threshold_objective", "youden")
-    vme_cost = getattr(config_handler, "vme_cost", 1.0)
-    me_cost = getattr(config_handler, "me_cost", 1.0)
+    threshold_objective = getattr(config_handler.pipeline, "threshold_objective", "youden")
+    vme_cost = getattr(config_handler.pipeline, "vme_cost", 1.0)
+    me_cost = getattr(config_handler.pipeline, "me_cost", 1.0)
 
     # Build imputation details
     if imputation_method == "none":
@@ -378,7 +386,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><td>Probability Calibration</td><td>{_esc(prob_calib_details)}</td></tr>
             <tr><td>Threshold Optimization</td><td>{_esc(threshold_details)}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{_esc(imputation_details)}</td></tr>
-            <tr><td>Confidence Intervals</td><td>{int(getattr(config_handler, "confidence_level", 0.95) * 100)}% ({getattr(config_handler, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
+            <tr><td>Confidence Intervals</td><td>{int(getattr(config_handler.pipeline, "confidence_level", 0.95) * 100)}% ({getattr(config_handler.pipeline, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
         </table>
     </section>
     """
@@ -442,12 +450,105 @@ def _generate_results_section(
     return "\n".join(sections)
 
 
+def _generate_subgroup_section(
+    output_path: Path, models: list[str], targets: list[str], section_num: int = 4
+) -> str:
+    """Generate subgroup analysis section from saved CSV files."""
+    sg_dir = output_path / DIR_SUBGROUP
+    if not sg_dir.exists():
+        return ""
+
+    sections = [
+        '<section id="subgroup-analysis">',
+        f"<h2>{section_num}. Subgroup Analysis</h2>",
+        "<p>Performance metrics broken down by subgroup column values. "
+        "Subgroups with fewer than 10 samples may have unreliable metrics.</p>",
+    ]
+
+    key_metrics = [
+        "AUROC",
+        "F1 (weighted)",
+        "MCC",
+        "Precision (1)",
+        "Recall (1)",
+        "Brier Score",
+    ]
+
+    found_any = False
+    for target in targets:
+        target_safe = sanitize_name(target)
+        target_dir = sg_dir / target_safe
+        if not target_dir.exists():
+            continue
+
+        csv_files = sorted(target_dir.glob("*_subgroup.csv"))
+        if not csv_files:
+            continue
+
+        sections.append(f"<h3>Target: {_esc(target)}</h3>")
+
+        for csv_file in csv_files:
+            try:
+                df = pd.read_csv(csv_file)
+            except Exception:
+                continue
+
+            if df.empty:
+                continue
+
+            found_any = True
+
+            # Extract subgroup column name from filename: {model}_{sg_col}_subgroup.csv
+            stem = csv_file.stem  # e.g. "LR_ward_subgroup"
+            parts = stem.rsplit("_subgroup", 1)[0]  # "LR_ward"
+            # Find model prefix by checking known models
+            sg_label = parts
+            for m in models:
+                m_safe = sanitize_name(m)
+                if parts.startswith(f"{m_safe}_"):
+                    sg_label = parts[len(f"{m_safe}_") :]
+                    sections.append(f"<h4>{_esc(m)} &mdash; {_esc(sg_label)}</h4>")
+                    break
+            else:
+                sections.append(f"<h4>{_esc(sg_label)}</h4>")
+
+            # Build table
+            sections.append("<table><thead><tr>")
+            sections.append("<th>Subgroup</th><th>N</th><th>Prevalence</th>")
+            for metric in key_metrics:
+                if metric in df.columns:
+                    sections.append(f"<th>{_esc(metric)}</th>")
+            sections.append("</tr></thead><tbody>")
+
+            for _, row in df.iterrows():
+                sections.append("<tr>")
+                sections.append(f"<td><strong>{_esc(str(row.get('Subgroup', '')))}</strong></td>")
+                sections.append(f"<td>{int(row.get('N', 0))}</td>")
+                prev = row.get("Prevalence", np.nan)
+                sections.append(f"<td>{prev:.3f}</td>" if not np.isnan(prev) else "<td>N/A</td>")
+                for metric in key_metrics:
+                    val = row.get(metric, np.nan)
+                    if not np.isnan(val):
+                        sections.append(f'<td class="metric-value">{val:.3f}</td>')
+                    else:
+                        sections.append("<td>N/A</td>")
+                sections.append("</tr>")
+
+            sections.append("</tbody></table>")
+
+    if not found_any:
+        return ""
+
+    sections.append("</section>")
+    return "\n".join(sections)
+
+
 def _generate_confusion_matrices_section(
-    output_path: Path, models: list[str], targets: list[str]
+    output_path: Path, models: list[str], targets: list[str], section_num: int = 4
 ) -> str:
     """Generate confusion matrices section with responsive grid layout."""
     cm_dir = output_path / DIR_CONFUSION_MATRICES
-    sections = ['<section id="confusion-matrices">', "<h2>4. Confusion Matrices</h2>"]
+    sections = ['<section id="confusion-matrices">', f"<h2>{section_num}. Confusion Matrices</h2>"]
 
     if not cm_dir.exists():
         sections.append("<p>No confusion matrix visualizations available.</p>")
@@ -486,12 +587,16 @@ def _generate_confusion_matrices_section(
 
 
 def _generate_calibration_section(
-    output_path: Path, metrics_data: dict, models: list[str], targets: list[str]
+    output_path: Path,
+    metrics_data: dict,
+    models: list[str],
+    targets: list[str],
+    section_num: int = 5,
 ) -> str:
     """Generate calibration diagnostics section with metrics and reliability curves."""
     sections = [
         '<section id="calibration-diagnostics">',
-        "<h2>5. Calibration Diagnostics</h2>",
+        f"<h2>{section_num}. Calibration Diagnostics</h2>",
         "<p>Calibration metrics measure how well the predicted probabilities "
         "match the observed frequencies. Lower Brier Score, ECE, and MCE indicate "
         "better calibration.</p>",
@@ -726,6 +831,14 @@ def generate_html_report(
         output_path, models, targets, filename_pattern="{model}_temporal_metrics.csv"
     )
 
+    # Generate subgroup section (may be empty if no subgroup data)
+    has_subgroup = (output_path / DIR_SUBGROUP).exists()
+    subgroup_html = _generate_subgroup_section(output_path, models, targets, section_num=4)
+    if not subgroup_html:
+        has_subgroup = False
+    cm_num = 5 if has_subgroup else 4
+    calib_num = cm_num + 1
+
     # Build HTML
     html_parts = [
         "<!DOCTYPE html>",
@@ -738,13 +851,16 @@ def generate_html_report(
         "</head>",
         "<body>",
         _generate_header(config_handler),
-        _generate_toc(targets),
+        _generate_toc(targets, has_subgroup=has_subgroup),
         _generate_metadata_section(config_handler),
         _generate_framework_summary_section(config_handler),
         _generate_results_section(metrics_data, models, targets, output_path),
         _generate_temporal_section(temporal_data, models, targets),
-        _generate_confusion_matrices_section(output_path, models, targets),
-        _generate_calibration_section(output_path, metrics_data, models, targets),
+        subgroup_html,
+        _generate_confusion_matrices_section(output_path, models, targets, section_num=cm_num),
+        _generate_calibration_section(
+            output_path, metrics_data, models, targets, section_num=calib_num
+        ),
         _generate_footer(),
         "</body>",
         "</html>",

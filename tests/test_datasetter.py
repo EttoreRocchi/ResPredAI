@@ -17,6 +17,8 @@ class TestDataSetter:
         data_path = {{data}}
         targets = {targets}
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = {group}
 
         [Pipeline]
@@ -171,7 +173,10 @@ class TestDataSetterTemporal:
         data_path = {{data}}
         targets = y
         continuous_features = age
+
+        [Metadata]
         group_column = group
+        temporal_column = {temporal_col}
 
         [Pipeline]
         models = lr
@@ -193,7 +198,6 @@ class TestDataSetterTemporal:
 
         [Validation]
         validation_strategy = temporal
-        temporal_split_column = {temporal_col}
         temporal_split_date = {split_date}
         """).strip()
 
@@ -248,7 +252,7 @@ class TestDataSetterTemporal:
         )
         df.to_csv(data_path, index=False)
 
-        with pytest.raises(ValueError, match="Temporal split column"):
+        with pytest.raises(ValueError, match="Temporal column"):
             DataSetter(config)
 
     def test_no_temporal_column_when_cv(self, tmp_path):
@@ -258,6 +262,8 @@ class TestDataSetterTemporal:
         data_path = {data}
         targets = y
         continuous_features = age
+
+        [Metadata]
         group_column = group
 
         [Pipeline]

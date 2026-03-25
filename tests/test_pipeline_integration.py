@@ -76,6 +76,8 @@ def create_test_config(tmp_path, data_path, with_groups=True):
     data_path = {data_path}
     targets = resistant
     continuous_features = age, bmi
+
+    [Metadata]
     group_column = {group_line}
 
     [Pipeline]
@@ -135,13 +137,13 @@ class TestPerformPipelineIntegration:
         # Run pipeline
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
             progress_callback=None,
         )
 
         # Verify outputs
-        output_dir = Path(config.out_folder)
+        output_dir = Path(config.output.out_folder)
         assert output_dir.exists()
 
         # Check metrics directory
@@ -173,12 +175,12 @@ class TestPerformPipelineIntegration:
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
             progress_callback=None,
         )
 
-        output_dir = Path(config.out_folder)
+        output_dir = Path(config.output.out_folder)
         assert output_dir.exists()
         assert (output_dir / "metrics" / "resistant" / "LR_metrics_detailed.csv").exists()
 
@@ -196,12 +198,14 @@ class TestPerformPipelineIntegration:
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Load and verify metrics
-        metrics_path = Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        metrics_path = (
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        )
         metrics_df = pd.read_csv(metrics_path)
 
         # Check expected columns
@@ -236,12 +240,12 @@ class TestPerformTrainingIntegration:
 
         perform_training(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Verify outputs
-        trained_models_dir = Path(config.out_folder) / "trained_models"
+        trained_models_dir = Path(config.output.out_folder) / "trained_models"
         assert trained_models_dir.exists()
 
         # Check metadata file
@@ -274,14 +278,14 @@ class TestPerformTrainingIntegration:
 
         perform_training(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Load model and check threshold
         import joblib
 
-        trained_models_dir = Path(config.out_folder) / "trained_models"
+        trained_models_dir = Path(config.output.out_folder) / "trained_models"
         model_files = list(trained_models_dir.glob("*.joblib"))
 
         for model_file in model_files:
@@ -314,13 +318,13 @@ class TestPerformEvaluationIntegration:
 
         perform_training(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Evaluate on test data
         eval_output_dir = tmp_path / "eval_output"
-        trained_models_dir = Path(config.out_folder) / "trained_models"
+        trained_models_dir = Path(config.output.out_folder) / "trained_models"
 
         results = perform_evaluation(
             models_dir=trained_models_dir,
@@ -359,12 +363,12 @@ class TestPerformEvaluationIntegration:
 
         perform_training(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         eval_output_dir = tmp_path / "eval_output"
-        trained_models_dir = Path(config.out_folder) / "trained_models"
+        trained_models_dir = Path(config.output.out_folder) / "trained_models"
 
         perform_evaluation(
             models_dir=trained_models_dir,
@@ -413,6 +417,8 @@ class TestPipelineWithImputation:
         data_path = {data_path}
         targets = resistant
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = patient_id
 
         [Pipeline]
@@ -454,13 +460,13 @@ class TestPipelineWithImputation:
         # Pipeline should complete without errors
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Verify outputs exist
         assert (
-            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
         ).exists()
 
 
@@ -479,6 +485,8 @@ class TestPipelineWithProbabilityCalibration:
         data_path = {data_path}
         targets = resistant
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = patient_id
 
         [Pipeline]
@@ -511,20 +519,20 @@ class TestPipelineWithProbabilityCalibration:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.calibrate_probabilities is True
-        assert config.probability_calibration_method == "sigmoid"
+        assert config.pipeline.calibrate_probabilities is True
+        assert config.pipeline.probability_calibration_method == "sigmoid"
 
         datasetter = DataSetter(config)
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Verify outputs
         assert (
-            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
         ).exists()
 
     @pytest.mark.slow
@@ -539,6 +547,8 @@ class TestPipelineWithProbabilityCalibration:
         data_path = {data_path}
         targets = resistant
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = patient_id
 
         [Pipeline]
@@ -575,12 +585,12 @@ class TestPipelineWithProbabilityCalibration:
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         assert (
-            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
         ).exists()
 
 
@@ -599,6 +609,8 @@ class TestPipelineWithRepeatedCV:
         data_path = {data_path}
         targets = resistant
         continuous_features = age, bmi
+
+        [Metadata]
         group_column = patient_id
 
         [Pipeline]
@@ -629,19 +641,19 @@ class TestPipelineWithRepeatedCV:
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.outer_cv_repeats == 2
+        assert config.pipeline.outer_cv_repeats == 2
 
         datasetter = DataSetter(config)
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Verify outputs exist
         assert (
-            Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
         ).exists()
 
 
@@ -661,12 +673,14 @@ class TestCalibrationDiagnostics:
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Load metrics and check for calibration metrics
-        metrics_path = Path(config.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        metrics_path = (
+            Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
+        )
         metrics_df = pd.read_csv(metrics_path)
 
         metric_names = metrics_df["Metric"].tolist()
@@ -687,12 +701,12 @@ class TestCalibrationDiagnostics:
 
         perform_pipeline(
             datasetter=datasetter,
-            models=config.models,
+            models=config.pipeline.models,
             config_handler=config,
         )
 
         # Check calibration directory exists with reliability curves
-        calibration_dir = Path(config.out_folder) / "calibration"
+        calibration_dir = Path(config.output.out_folder) / "calibration"
         assert calibration_dir.exists()
 
         # Check reliability curve file exists

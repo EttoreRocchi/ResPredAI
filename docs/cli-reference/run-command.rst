@@ -73,7 +73,12 @@ Override configuration file parameters without editing the file:
 Configuration File
 ------------------
 
-The configuration file uses INI format with the following sections:
+The configuration file uses INI format with the following sections.
+
+.. note::
+
+   Optional parameters can be disabled by commenting out the line with ``#``.
+   Empty values (e.g., ``group_column =``) are treated as absent.
 
 [Data] Section
 ~~~~~~~~~~~~~~
@@ -104,12 +109,36 @@ Defines the input data and features.
   - These features will be scaled using StandardScaler
   - All other features are treated as categorical and one-hot encoded
 
+[Metadata] Section
+~~~~~~~~~~~~~~~~~~
+
+Defines metadata columns used for grouping, temporal splitting, and subgroup analysis.
+
+.. code-block:: ini
+
+    [Metadata]
+    group_column = patient_id
+    temporal_column = collection_date
+    # subgroup_columns = ward, sex
+
+**Parameters:**
+
 - ``group_column`` (optional) - Column name for grouping related samples
 
   - Use when you have multiple samples from the same patient/subject
   - Prevents data leakage by keeping all samples from the same group in the same fold
   - Enables ``StratifiedGroupKFold`` for both outer and inner cross-validation (if not specified, standard ``StratifiedKFold`` is used)
   - See details in :doc:`create-config-command`
+
+- ``temporal_column`` (optional) - Name of the date/time column for temporal splitting
+
+  - Required when ``validation_strategy`` is ``temporal`` or ``both``
+  - Values are parsed as dates
+
+- ``subgroup_columns`` (optional) - Comma-separated list of columns for subgroup analysis
+
+  - Performance metrics are computed separately for each subgroup
+  - Useful for evaluating model fairness across demographic or clinical categories
 
 [Pipeline] Section
 ~~~~~~~~~~~~~~~~~~
@@ -130,6 +159,7 @@ Controls the machine learning pipeline configuration.
     probability_calibration_cv = 5
     confidence_level = 0.95
     n_bootstrap = 1000
+    compute_feature_direction = false
 
 **Parameters:**
 
@@ -194,6 +224,12 @@ Controls the machine learning pipeline configuration.
 
   - Must be at least 100
   - Higher values give more stable CI estimates at the cost of computation time
+
+- ``compute_feature_direction`` - Compute the direction of feature effects (optional, default: ``false``)
+
+  - ``true``: Determine whether each feature increases or decreases the predicted probability
+  - ``false``: Skip feature direction computation
+  - Useful for interpretability alongside feature importance scores
 
 [Reproducibility] Section
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -379,9 +415,12 @@ Controls validation strategy (optional, defaults to standard cross-validation).
 
     [Validation]
     validation_strategy = cv
-    # temporal_split_column = collection_date
     # temporal_split_date = 2023-01-01
     # temporal_split_ratio = 0.8
+
+    [Metadata]
+    temporal_column = collection_date
+    # subgroup_columns = ward, sex
 
 **Parameters:**
 
@@ -391,7 +430,7 @@ Controls validation strategy (optional, defaults to standard cross-validation).
   - ``temporal``: Temporal (prospective-style) validation only
   - ``both``: Run both CV and temporal validation
 
-- ``temporal_split_column`` - Name of the date/time column for temporal splitting
+- ``temporal_column`` - Name of the date/time column for temporal splitting (configured in ``[Metadata]`` section)
 
   - Required when ``validation_strategy`` is ``temporal`` or ``both``
   - Values are parsed as dates
@@ -406,7 +445,7 @@ Controls validation strategy (optional, defaults to standard cross-validation).
   - Must be between 0 and 1 (exclusive)
   - Mutually exclusive with ``temporal_split_date``
 
-**Note:** When ``group_column`` is configured, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
+**Note:** When ``group_column`` is configured in the ``[Metadata]`` section, temporal splitting assigns entire groups based on the group's latest date to prevent data leakage.
 
 Pipeline Workflow
 -----------------

@@ -58,6 +58,15 @@ Optional
   - Ensures reproducible SHAP values across runs
   - Only affects models using SHAP fallback
 
+- ``--direction`` - Compute signed feature direction (Risk/Protective)
+
+  - Determines whether each feature is a risk factor or protective factor
+  - Linear models: uses coefficient sign directly (no extra computation)
+  - Tree-based models (RF, XGB, CatBoost): uses TreeExplainer for signed SHAP values
+  - Other models: falls back to KernelExplainer for signed SHAP values
+  - Adds a ``Direction`` column to the CSV output (``Risk (+)`` or ``Protective (-)``)
+  - Colors plot bars by direction: firebrick (risk) / seagreen (protective)
+
 Supported Models
 ----------------
 
@@ -130,6 +139,8 @@ For models with native importance:
      - Absolute mean importance (used for ranking)
    * - ``Mean±Std``
      - Formatted string with mean ± std
+   * - ``Direction``
+     - Feature direction: ``Risk (+)`` or ``Protective (-)`` (only when ``--direction`` is used)
 
 CSV File Format (SHAP)
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -183,6 +194,12 @@ The barplot uses different colors to indicate importance type:
    * - Native (linear, negative)
      - Green
      - Negative coefficient
+   * - Direction (risk)
+     - Red (firebrick)
+     - Risk factor (``--direction`` flag)
+   * - Direction (protective)
+     - Green (seagreen)
+     - Protective factor (``--direction`` flag)
 
 Error bars show standard deviation across CV folds.
 

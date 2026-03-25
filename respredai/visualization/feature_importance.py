@@ -12,7 +12,11 @@ import shap
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import TunedThresholdClassifierCV
 
-from respredai.core.constants import DIR_FEATURE_IMPORTANCE, sanitize_name
+from respredai.core.constants import (
+    DIR_FEATURE_IMPORTANCE,
+    TREE_BASED_MODELS,
+    sanitize_name,
+)
 
 
 def unwrap_calibrated_model(model):
@@ -152,6 +156,114 @@ def compute_shap_importance(
         return None
 
 
+def _shap_direction_from_correlation(
+    shap_values: np.ndarray, X_values: np.ndarray, feature_names: list[str]
+) -> pd.Series:
+    """Determine direction via Spearman correlation between feature values and SHAP values.
+
+    A positive correlation means higher feature values push toward class 1
+    (risk factor); negative means they push toward class 0 (protective).
+    This is robust to class imbalance, unlike taking the mean of SHAP values.
+    """
+    from scipy.stats import spearmanr
+
+    directions = np.zeros(len(feature_names))
+    for i in range(len(feature_names)):
+        feat_col = X_values[:, i] if X_values.ndim == 2 else X_values
+        shap_col = shap_values[:, i]
+        # Constant columns have no direction
+        if np.std(feat_col) == 0 or np.std(shap_col) == 0:
+            directions[i] = 0.0
+            continue
+        corr, _ = spearmanr(feat_col, shap_col)
+        directions[i] = corr if not np.isnan(corr) else 0.0
+    return pd.Series(directions, index=feature_names)
+
+
+def compute_feature_direction(
+    model,
+    X_test: np.ndarray,
+    feature_names: list[str],
+    model_name: str,
+    background_size: int = 100,
+    seed: Optional[int] = None,
+) -> Optional[pd.Series]:
+    """Compute signed feature direction (positive = risk, negative = protective).
+
+    For linear models, the sign of the coefficient is used directly.
+    For all other models, SHAP values are computed and the direction is
+    determined via Spearman correlation between feature values and their
+    SHAP contributions - this is robust to class imbalance.
+
+    Parameters
+    ----------
+    model : sklearn estimator
+        Trained model (possibly wrapped in calibration).
+    X_test : np.ndarray
+        Test data (scaled).
+    feature_names : list[str]
+        Feature names matching the column order of *X_test*.
+    model_name : str
+        Model identifier (e.g. ``"LR"``, ``"RF"``).
+    background_size : int
+        Background samples for KernelExplainer fallback.
+    seed : int, optional
+        Random seed.
+
+    Returns
+    -------
+    pd.Series or None
+        Signed direction per feature (positive = risk, negative = protective).
+    """
+    if model is None or X_test is None:
+        return None
+
+    inner_model = unwrap_calibrated_model(model)
+
+    # Linear models: use sign of coefficients directly (fast, no extra computation)
+    if hasattr(inner_model, "coef_"):
+        coef = inner_model.coef_
+        if len(coef.shape) > 1:
+            # Binary classification: use class-1 coefficients
+            coef = coef[0] if coef.shape[0] == 1 else coef.mean(axis=0)
+        return pd.Series(coef, index=feature_names)
+
+    try:
+        X_df = pd.DataFrame(X_test, columns=feature_names)
+        X_arr = np.asarray(X_test)
+
+        # Tree-based models: use TreeExplainer (fast, exact)
+        if model_name in TREE_BASED_MODELS and hasattr(inner_model, "predict"):
+            try:
+                explainer = shap.TreeExplainer(inner_model)
+                shap_values = explainer.shap_values(X_df)
+                if isinstance(shap_values, list):
+                    shap_values = shap_values[1]  # class 1 (resistant)
+                return _shap_direction_from_correlation(
+                    np.asarray(shap_values), X_arr, feature_names
+                )
+            except Exception:
+                pass  # Fall through to KernelExplainer
+
+        # Fallback: KernelExplainer (model-agnostic, slower)
+        if len(X_df) > background_size:
+            background = shap.sample(X_df, background_size, random_state=seed)
+        else:
+            background = X_df
+
+        def predict_fn(x):
+            x_df = pd.DataFrame(x, columns=feature_names)
+            return model.predict_proba(x_df)[:, 1]
+
+        explainer = shap.KernelExplainer(predict_fn, background)
+        shap_values = explainer.shap_values(X_df)
+        return _shap_direction_from_correlation(np.asarray(shap_values), X_arr, feature_names)
+
+    except Exception as e:
+        warnings.warn(f"Feature direction computation failed: {str(e)}")
+        return None
+
+
 def _resolve_feature_names(
     model, fold_test_data: list, fold_transformers: list, n_features: int
 ) -> list[str]:
@@ -195,9 +307,80 @@ def _resolve_feature_names(
     return [f"feature_{i}" for i in range(n_features)]
 
 
+def _compute_directions_from_folds(
+    fold_models: list,
+    fold_test_data: list,
+    fold_transformers: list,
+    feature_names: list[str],
+    model_name: Optional[str],
+    seed: Optional[int],
+) -> Optional[pd.Series]:
+    """Aggregate signed direction across folds and return direction labels.
+
+    Parameters
+    ----------
+    fold_models : list
+        Trained models per fold (may contain ``None``).
+    fold_test_data : list
+        Per-fold ``(X_test, feature_names)`` tuples.
+    fold_transformers : list
+        Per-fold transformers (unused but kept for API symmetry).
+    feature_names : list[str]
+        Canonical feature names to align results to.
+    model_name : str or None
+        Model identifier (e.g. ``"LR"``, ``"RF"``).
+    seed : int or None
+        Random seed for SHAP reproducibility.
+
+    Returns
+    -------
+    pd.Series or None
+        Direction labels (``"Risk (+)"`` / ``"Protective (-)"``),
+        or ``None`` if direction could not be computed.
+    """
+    direction_list: list[pd.Series] = []
+
+    for fold_idx, model in enumerate(fold_models):
+        if model is None:
+            continue
+
+        X_test = None
+        original_names = None
+        if fold_idx < len(fold_test_data) and fold_test_data[fold_idx] is not None:
+            X_test, original_names = fold_test_data[fold_idx]
+
+        if X_test is None or original_names is None:
+            continue
+
+        # Use original_names (matches X_test column order) for SHAP / coef_
+        # computation, not the importance-reordered feature_names.
+        signed = compute_feature_direction(
+            model,
+            X_test,
+            list(original_names),
+            model_name=model_name or "",
+            seed=seed,
+        )
+        if signed is not None:
+            direction_list.append(signed)
+
+    if not direction_list:
+        return None
+
+    mean_signed = pd.DataFrame(direction_list).fillna(0).mean(axis=0)
+    # Align to requested feature_names
+    mean_signed = mean_signed.reindex(feature_names, fill_value=0)
+    return mean_signed.apply(lambda v: "Risk (+)" if v >= 0 else "Protective (-)")
+
+
 def extract_feature_importance_from_models(
-    model_path: Path, top_n: Optional[int] = None, use_shap: bool = True, seed: Optional[int] = None
-) -> Optional[tuple[pd.DataFrame, list[str], str]]:
+    model_path: Path,
+    top_n: Optional[int] = None,
+    use_shap: bool = True,
+    seed: Optional[int] = None,
+    compute_direction_flag: bool = False,
+    model_name: Optional[str] = None,
+) -> Optional[tuple[pd.DataFrame, list[str], str, Optional[pd.Series]]]:
     """
     Extract feature importance from a saved model file.
 
@@ -213,12 +396,19 @@ def extract_feature_importance_from_models(
         Whether to use SHAP as fallback (default: True).
     seed : int, optional
         Random seed for SHAP reproducibility.
+    compute_direction_flag : bool
+        Whether to compute signed feature direction (default: False).
+    model_name : str, optional
+        Model identifier (e.g. ``"LR"``, ``"RF"``).  Required when
+        *compute_direction_flag* is True.
 
     Returns
     -------
     tuple or None
-        (DataFrame with importances per fold, feature names, method used).
-        Method is "native" or "shap". Returns None if not available.
+        ``(importances_df, feature_names, method, directions)``.
+        *directions* is a :class:`pd.Series` mapping feature names to
+        ``"Risk (+)"`` / ``"Protective (-)"`` strings, or ``None`` when
+        *compute_direction_flag* is False.
     """
     if not model_path.exists():
         warnings.warn(f"Model file not found: {model_path}")
@@ -285,7 +475,20 @@ def extract_feature_importance_from_models(
                 importances_df = importances_df[abs_mean_importance.index]
 
             feature_names = importances_df.columns.tolist()
-            return importances_df, feature_names, "native"
+
+            # Compute direction if requested
+            directions = None
+            if compute_direction_flag:
+                directions = _compute_directions_from_folds(
+                    fold_models,
+                    fold_test_data,
+                    fold_transformers,
+                    feature_names,
+                    model_name,
+                    seed,
+                )
+
+            return importances_df, feature_names, "native", directions
 
     # Fall back to SHAP if native not available
     if use_shap and fold_test_data:
@@ -319,7 +522,19 @@ def extract_feature_importance_from_models(
             else:
                 importances_df = importances_df[abs_mean_importance.index]
 
-            return importances_df, feature_names, "shap"
+            # For SHAP fallback, direction can be derived from signed SHAP
+            directions = None
+            if compute_direction_flag:
+                directions = _compute_directions_from_folds(
+                    fold_models,
+                    fold_test_data,
+                    fold_transformers,
+                    feature_names,
+                    model_name,
+                    seed,
+                )
+
+            return importances_df, feature_names, "shap", directions
 
     return None
 
@@ -332,6 +547,7 @@ def plot_feature_importance(
     top_n: int = 20,
     figsize: tuple[int, int] = (10, 8),
     method: str = "native",
+    directions: Optional[pd.Series] = None,
 ):
     """
     Create a barplot of feature importance with error bars.
@@ -352,6 +568,8 @@ def plot_feature_importance(
         Figure size (width, height).
     method : str
         Method used ("native" or "shap").
+    directions : pd.Series, optional
+        Direction labels per feature (``"Risk (+)"`` / ``"Protective (-)"``).
     """
     mean_importance = importances_df.mean(axis=0)
     std_importance = importances_df.std(axis=0)
@@ -366,7 +584,15 @@ def plot_feature_importance(
 
     y_pos = np.arange(len(top_features))
 
-    if method == "shap":
+    if directions is not None:
+        # Color by direction: risk = firebrick, protective = seagreen
+        colors = [
+            "firebrick" if directions.get(feat, "Risk (+)") == "Risk (+)" else "seagreen"
+            for feat in top_features.index
+        ]
+        xlabel = "Importance (mean ± std)"
+        title_suffix = "(with direction)"
+    elif method == "shap":
         colors = ["darkorange"] * len(top_features)
         xlabel = "Mean |SHAP value| (mean ± std)"
         title_suffix = "(SHAP)"
@@ -400,6 +626,16 @@ def plot_feature_importance(
     ax.grid(axis="x", alpha=0.3)
     ax.axvline(x=0, color="black", linestyle="-", linewidth=0.8)
 
+    # Add legend if direction coloring is used
+    if directions is not None:
+        from matplotlib.patches import Patch
+
+        legend_elements = [
+            Patch(facecolor="firebrick", alpha=0.7, label="Risk (+)"),
+            Patch(facecolor="seagreen", alpha=0.7, label="Protective (-)"),
+        ]
+        ax.legend(handles=legend_elements, loc="lower right")
+
     plt.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -408,7 +644,10 @@ def plot_feature_importance(
 
 
 def save_feature_importance_csv(
-    importances_df: pd.DataFrame, output_path: Path, method: str = "native"
+    importances_df: pd.DataFrame,
+    output_path: Path,
+    method: str = "native",
+    directions: Optional[pd.Series] = None,
 ):
     """
     Save feature importance to CSV with mean and std.
@@ -421,6 +660,8 @@ def save_feature_importance_csv(
         Path to save the CSV file.
     method : str
         Method used ("native" or "shap").
+    directions : pd.Series, optional
+        Direction labels per feature (``"Risk (+)"`` / ``"Protective (-)"``).
     """
     mean_importance = importances_df.mean(axis=0)
     std_importance = importances_df.std(axis=0)
@@ -448,6 +689,9 @@ def save_feature_importance_csv(
         )
         summary_df = summary_df.sort_values("Abs_Mean_Importance", ascending=False)
 
+    if directions is not None:
+        summary_df["Direction"] = summary_df["Feature"].map(directions).fillna("")
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary_df.to_csv(output_path, index=False)
 
@@ -461,6 +705,7 @@ def process_feature_importance(
     save_csv: bool = True,
     use_shap: bool = True,
     seed: Optional[int] = None,
+    compute_direction: bool = False,
 ) -> Optional[tuple[pd.DataFrame, str]]:
     """
     Process feature importance for a model-target combination.
@@ -485,6 +730,8 @@ def process_feature_importance(
         Whether to use SHAP as fallback (default: True).
     seed : int, optional
         Random seed for SHAP reproducibility.
+    compute_direction : bool
+        Whether to compute signed feature direction (default: False).
 
     Returns
     -------
@@ -496,14 +743,19 @@ def process_feature_importance(
     model_path = get_model_path(output_folder, model, target)
 
     result = extract_feature_importance_from_models(
-        model_path, top_n=None, use_shap=use_shap, seed=seed
+        model_path,
+        top_n=None,
+        use_shap=use_shap,
+        seed=seed,
+        compute_direction_flag=compute_direction,
+        model_name=model,
     )
 
     if result is None:
         warnings.warn(f"Feature importance not available for {model} - {target}.")
         return None
 
-    importances_df, feature_names, method = result
+    importances_df, feature_names, method, directions = result
 
     model_safe = sanitize_name(model)
     target_safe = sanitize_name(target)
@@ -517,7 +769,7 @@ def process_feature_importance(
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.csv"
         )
-        save_feature_importance_csv(importances_df, csv_path, method=method)
+        save_feature_importance_csv(importances_df, csv_path, method=method, directions=directions)
 
     if save_plot:
         plot_path = (
@@ -533,6 +785,7 @@ def process_feature_importance(
             output_path=plot_path,
             top_n=top_n,
             method=method,
+            directions=directions,
         )
 
     return importances_df, method

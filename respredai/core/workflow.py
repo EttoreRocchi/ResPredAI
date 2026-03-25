@@ -26,6 +26,7 @@ from respredai.core.constants import (
     DIR_CALIBRATION,
     DIR_METRICS,
     DIR_PREDICTIONS,
+    DIR_SUBGROUP,
     DIR_TRAINED_MODELS,
     FILE_EVALUATION_SUMMARY,
     FILE_TRAINING_METADATA,
@@ -66,8 +67,9 @@ def _deduplicate_repeated_cv_predictions(
 
     Returns
     -------
-    tuple of (np.ndarray, np.ndarray, np.ndarray)
-        (dedup_true, dedup_pred, dedup_prob) arrays with one entry per unique sample.
+    tuple of (np.ndarray, np.ndarray, np.ndarray, np.ndarray)
+        (unique_idx, dedup_true, dedup_pred, dedup_prob) arrays with one entry
+        per unique sample.  ``unique_idx`` contains the original sample indices.
     """
     indices = np.array(indices)
     y_true = np.array(y_true)
@@ -91,7 +93,7 @@ def _deduplicate_repeated_cv_predictions(
         dedup_prob[j] = sorted_prob[g].mean(axis=0)
 
     dedup_pred = (dedup_prob[:, 1] >= threshold).astype(int)
-    return dedup_true, dedup_pred, dedup_prob
+    return unique_idx, dedup_true, dedup_pred, dedup_prob
 
 
 def _build_ohe_transformer(categorical_cols, ohe_min_frequency=None):
@@ -163,7 +165,7 @@ def _apply_ohe_and_clean(ohe_transformer, X_train, X_test=None):
 
 def _resolve_threshold_method(config_handler, n_train_samples):
     """Resolve 'auto' threshold method based on training set size."""
-    method = config_handler.threshold_method
+    method = config_handler.pipeline.threshold_method
     if method == "auto":
         method = "oof" if n_train_samples < SAMPLE_SIZE_THRESHOLD_DECISION else "cv"
     return method
@@ -206,15 +208,15 @@ def _get_pipeline_for_model(model_name, config_handler, datasetter):
     return get_pipeline(
         model_name=model_name,
         continuous_cols=datasetter.continuous_features,
-        inner_folds=config_handler.inner_folds,
-        n_jobs=config_handler.n_jobs,
-        rnd_state=config_handler.seed,
+        inner_folds=config_handler.pipeline.inner_folds,
+        n_jobs=config_handler.reproducibility_cfg.n_jobs,
+        rnd_state=config_handler.reproducibility_cfg.seed,
         use_groups=(datasetter.groups is not None),
-        imputation_method=config_handler.imputation_method,
-        imputation_strategy=config_handler.imputation_strategy,
-        imputation_n_neighbors=config_handler.imputation_n_neighbors,
-        imputation_estimator=config_handler.imputation_estimator,
-        calibrate_probabilities=config_handler.calibrate_probabilities,
+        imputation_method=config_handler.imputation.method,
+        imputation_strategy=config_handler.imputation.strategy,
+        imputation_n_neighbors=config_handler.imputation.n_neighbors,
+        imputation_estimator=config_handler.imputation.estimator,
+        calibrate_probabilities=config_handler.pipeline.calibrate_probabilities,
     )
 
 
@@ -225,24 +227,24 @@ def _generate_final_reports(
 ) -> None:
     """Generate summary reports, HTML report, and reproducibility manifest."""
     generate_summary_report(
-        output_folder=config_handler.out_folder,
-        models=config_handler.models,
+        output_folder=config_handler.output.out_folder,
+        models=config_handler.pipeline.models,
         targets=list(Y.columns),
     )
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Generating HTML report...")
     try:
         report_path = generate_html_report(
-            output_folder=config_handler.out_folder,
-            models=config_handler.models,
+            output_folder=config_handler.output.out_folder,
+            models=config_handler.pipeline.models,
             targets=list(Y.columns),
             config_handler=config_handler,
         )
-        if config_handler.verbosity:
+        if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.info(f"HTML report generated: {report_path}")
     except Exception as e:
-        if config_handler.verbosity:
+        if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.warning(f"Failed to generate HTML report: {e}")
 
     from respredai.io.reproducibility import (
@@ -251,8 +253,8 @@ def _generate_final_reports(
     )
 
     manifest = create_reproducibility_manifest(config_handler, datasetter)
-    save_reproducibility_manifest(manifest, Path(config_handler.out_folder))
-    if config_handler.verbosity:
+    save_reproducibility_manifest(manifest, Path(config_handler.output.out_folder))
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Reproducibility manifest saved.")
 
 
@@ -262,9 +264,9 @@ def _aggregate_confusion_matrices(
     config_handler: ConfigHandler,
 ) -> dict:
     """Compute average confusion matrices across folds/repeats."""
-    if config_handler.outer_cv_repeats > 1:
-        n_folds = config_handler.outer_folds
-        n_repeats = config_handler.outer_cv_repeats
+    if config_handler.pipeline.outer_cv_repeats > 1:
+        n_folds = config_handler.pipeline.outer_folds
+        n_repeats = config_handler.pipeline.outer_cv_repeats
         average_cms = {}
         for target in Y.columns:
             repeat_cms = [
@@ -297,23 +299,29 @@ def _compute_ci_metrics_for_target(
     all_y_prob: dict,
     all_metrics: dict,
     metrics_output_path: Path,
-) -> None:
-    """Deduplicate samples for repeated CV and save metrics with bootstrap CI."""
-    if config_handler.outer_cv_repeats > 1 and all_test_indices[target]:
-        y_true_ci, _, y_prob_ci = _deduplicate_repeated_cv_predictions(
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Deduplicate samples for repeated CV and save metrics with bootstrap CI.
+
+    Returns
+    -------
+    tuple of (unique_idx, y_true_ci, y_pred_ci, y_prob_ci)
+        Deduplicated arrays suitable for subgroup analysis.
+    """
+    if config_handler.pipeline.outer_cv_repeats > 1 and all_test_indices[target]:
+        unique_idx, y_true_ci, _, y_prob_ci = _deduplicate_repeated_cv_predictions(
             all_test_indices[target],
             all_y_true[target],
             all_y_pred[target],
             all_y_prob[target],
         )
 
-        if config_handler.calibrate_threshold:
+        if config_handler.pipeline.calibrate_threshold:
             from respredai.core.metrics import get_threshold_scorer
 
             threshold_scorer = get_threshold_scorer(
-                config_handler.threshold_objective,
-                config_handler.vme_cost,
-                config_handler.me_cost,
+                config_handler.pipeline.threshold_objective,
+                config_handler.pipeline.vme_cost,
+                config_handler.pipeline.me_cost,
             )
             _, _, thresholds = roc_curve(y_true_ci, y_prob_ci[:, 1])
 
@@ -330,6 +338,7 @@ def _compute_ci_metrics_for_target(
 
         y_pred_ci = (y_prob_ci[:, 1] >= dedup_threshold).astype(int)
     else:
+        unique_idx = np.array(all_test_indices[target])
         y_true_ci = np.array(all_y_true[target])
         y_pred_ci = np.array(all_y_pred[target])
         y_prob_ci = np.array(all_y_prob[target])
@@ -337,15 +346,17 @@ def _compute_ci_metrics_for_target(
     save_metrics_summary(
         metrics_dict=all_metrics[target],
         output_path=metrics_output_path,
-        confidence=config_handler.confidence_level,
-        n_bootstrap=config_handler.n_bootstrap,
-        random_state=config_handler.seed,
+        confidence=config_handler.pipeline.confidence_level,
+        n_bootstrap=config_handler.pipeline.n_bootstrap,
+        random_state=config_handler.reproducibility_cfg.seed,
         y_true_all=y_true_ci,
         y_pred_all=y_pred_ci,
         y_prob_all=y_prob_ci,
-        n_folds=config_handler.outer_folds,
-        n_repeats=config_handler.outer_cv_repeats,
+        n_folds=config_handler.pipeline.outer_folds,
+        n_repeats=config_handler.pipeline.outer_cv_repeats,
     )
+
+    return unique_idx, y_true_ci, y_pred_ci, y_prob_ci
 
 
 def _apply_probability_calibration(
@@ -366,17 +377,17 @@ def _apply_probability_calibration(
     """
     if groups is not None:
         prob_calib_cv = StratifiedGroupKFold(
-            n_splits=config_handler.probability_calibration_cv,
+            n_splits=config_handler.pipeline.probability_calibration_cv,
             shuffle=True,
-            random_state=config_handler.seed,
+            random_state=config_handler.reproducibility_cfg.seed,
         )
         prob_calib_splits = list(prob_calib_cv.split(X_train_scaled, y_train, groups))
     else:
-        prob_calib_splits = config_handler.probability_calibration_cv
+        prob_calib_splits = config_handler.pipeline.probability_calibration_cv
 
     calibrated_classifier = CalibratedClassifierCV(
         estimator=best_estimator,
-        method=config_handler.probability_calibration_method,
+        method=config_handler.pipeline.probability_calibration_method,
         cv=prob_calib_splits,
         n_jobs=1,
     )
@@ -428,26 +439,26 @@ def _optimize_threshold(
         # OOF predictions approach
         if groups is not None:
             inner_cv = StratifiedGroupKFold(
-                n_splits=config_handler.inner_folds,
+                n_splits=config_handler.pipeline.inner_folds,
                 shuffle=True,
-                random_state=config_handler.seed,
+                random_state=config_handler.reproducibility_cfg.seed,
             )
             cv_fit_params = {"groups": groups}
         else:
             inner_cv = StratifiedKFold(
-                n_splits=config_handler.inner_folds,
+                n_splits=config_handler.pipeline.inner_folds,
                 shuffle=True,
-                random_state=config_handler.seed,
+                random_state=config_handler.reproducibility_cfg.seed,
             )
             cv_fit_params = {}
 
         oof_estimator = clone(best_estimator)
         if (
-            config_handler.calibrate_probabilities
+            config_handler.pipeline.calibrate_probabilities
             and hasattr(oof_estimator, "cv")
             and isinstance(getattr(oof_estimator, "cv", None), list)
         ):
-            oof_estimator.cv = config_handler.probability_calibration_cv
+            oof_estimator.cv = config_handler.pipeline.probability_calibration_cv
 
         y_pred_proba_oof = cross_val_predict(
             oof_estimator,
@@ -459,9 +470,9 @@ def _optimize_threshold(
         )
 
         threshold_scorer = get_threshold_scorer(
-            config_handler.threshold_objective,
-            config_handler.vme_cost,
-            config_handler.me_cost,
+            config_handler.pipeline.threshold_objective,
+            config_handler.pipeline.vme_cost,
+            config_handler.pipeline.me_cost,
         )
 
         _, _, thresholds = roc_curve(y_train, y_pred_proba_oof[:, 1])
@@ -479,27 +490,27 @@ def _optimize_threshold(
 
     else:  # cv
         threshold_scorer_fn = get_threshold_scorer(
-            config_handler.threshold_objective,
-            config_handler.vme_cost,
-            config_handler.me_cost,
+            config_handler.pipeline.threshold_objective,
+            config_handler.pipeline.vme_cost,
+            config_handler.pipeline.me_cost,
         )
         objective_scorer = make_scorer(threshold_scorer_fn)
 
-        if config_handler.calibrate_probabilities:
+        if config_handler.pipeline.calibrate_probabilities:
             base_est = clone(grid_estimator)
             base_est.set_params(**best_params)
 
             if groups is not None:
                 calib_cv = StratifiedGroupKFold(
-                    n_splits=config_handler.probability_calibration_cv,
+                    n_splits=config_handler.pipeline.probability_calibration_cv,
                     shuffle=True,
-                    random_state=config_handler.seed,
+                    random_state=config_handler.reproducibility_cfg.seed,
                 )
             else:
                 calib_cv = prob_calib_splits  # int - safe for any subset
             estimator_for_threshold = CalibratedClassifierCV(
                 estimator=base_est,
-                method=config_handler.probability_calibration_method,
+                method=config_handler.pipeline.probability_calibration_method,
                 cv=calib_cv,
                 n_jobs=1,
             )
@@ -509,15 +520,15 @@ def _optimize_threshold(
 
         if groups is not None:
             inner_tuner_cv = StratifiedGroupKFold(
-                n_splits=config_handler.inner_folds,
+                n_splits=config_handler.pipeline.inner_folds,
                 shuffle=True,
-                random_state=config_handler.seed,
+                random_state=config_handler.reproducibility_cfg.seed,
             )
         else:
             inner_tuner_cv = StratifiedKFold(
-                n_splits=config_handler.inner_folds,
+                n_splits=config_handler.pipeline.inner_folds,
                 shuffle=True,
-                random_state=config_handler.seed,
+                random_state=config_handler.reproducibility_cfg.seed,
             )
 
         tuned_model = TunedThresholdClassifierCV(
@@ -572,29 +583,33 @@ def perform_pipeline(
         Callback object for progress updates.
     """
     X, Y = datasetter.X, datasetter.Y
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info(f"Data dimension: {X.shape}")
 
     # List of categorical columns (non-continuous)
     categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
     # Build unfitted OHE template (will be cloned and fit inside each CV fold)
-    ohe_template = _build_ohe_transformer(categorical_cols, config_handler.ohe_min_frequency)
+    ohe_template = _build_ohe_transformer(
+        categorical_cols, config_handler.preprocessing.ohe_min_frequency
+    )
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info(
             f"Data dimension (pre-OHE): {X.shape}. Training on {len(models)} models: {models}."
         )
 
     # Calculate total iterations (folds * repeats)
-    total_outer_iterations = config_handler.outer_folds * config_handler.outer_cv_repeats
+    total_outer_iterations = (
+        config_handler.pipeline.outer_folds * config_handler.pipeline.outer_cv_repeats
+    )
 
     if progress_callback:
         total_work = len(models) * len(Y.columns) * total_outer_iterations
         progress_callback.start(total_work=total_work)
 
     for model in models:
-        if config_handler.verbosity:
+        if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.info(f"Starting model: {model}")
 
         if progress_callback:
@@ -604,7 +619,7 @@ def perform_pipeline(
         try:
             transformer, grid = _get_pipeline_for_model(model, config_handler, datasetter)
         except Exception as e:
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.error(f"Failed to initialize model {model}: {str(e)}")
             warnings.warn(f"Skipping model {model} due to initialization error: {str(e)}")
             if progress_callback:
@@ -614,10 +629,10 @@ def perform_pipeline(
 
         # Get outer CV splitter (supports repeated CV and groups)
         outer_cv = get_outer_cv(
-            n_splits=config_handler.outer_folds,
-            n_repeats=config_handler.outer_cv_repeats,
+            n_splits=config_handler.pipeline.outer_folds,
+            n_repeats=config_handler.pipeline.outer_cv_repeats,
             use_groups=(datasetter.groups is not None),
-            random_state=config_handler.seed,
+            random_state=config_handler.reproducibility_cfg.seed,
         )
 
         f1scores, mccs, cms, aurocs = {}, {}, {}, {}
@@ -633,7 +648,7 @@ def perform_pipeline(
 
         for target in Y.columns:
             # Check for existing saved models
-            model_path = get_model_path(config_handler.out_folder, model, target)
+            model_path = get_model_path(config_handler.output.out_folder, model, target)
 
             model_data = None
             start_fold = 0
@@ -644,14 +659,14 @@ def perform_pipeline(
             fold_hyperparams = []
             fold_test_data = []
 
-            if config_handler.save_models_enable and model_path.exists():
+            if config_handler.output.save_models_enable and model_path.exists():
                 model_data = load_models(model_path)
                 if model_data is not None:
                     completed_folds = model_data.get("completed_folds", 0)
 
                     # Check if all folds are completed
-                    if completed_folds >= config_handler.outer_folds:
-                        if config_handler.verbosity:
+                    if completed_folds >= config_handler.pipeline.outer_folds:
+                        if config_handler.reproducibility_cfg.verbosity:
                             config_handler.logger.info(
                                 f"All folds completed for {model} - {target}. Loading from saved models."
                             )
@@ -675,7 +690,7 @@ def perform_pipeline(
 
                         if progress_callback:
                             progress_callback.skip_target(
-                                target, config_handler.outer_folds, "saved models"
+                                target, config_handler.pipeline.outer_folds, "saved models"
                             )
 
                         continue
@@ -702,7 +717,7 @@ def perform_pipeline(
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
                         all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
 
-                        if config_handler.verbosity:
+                        if config_handler.reproducibility_cfg.verbosity:
                             config_handler.logger.info(
                                 f"Resuming {model} - {target} from fold {start_fold + 1}"
                             )
@@ -724,7 +739,7 @@ def perform_pipeline(
                 fold_y_prob_calib[target] = []
 
             y = Y[target]
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.info(
                     f"Starting training for target: {target} (from fold {start_fold + 1})."
                 )
@@ -732,7 +747,7 @@ def perform_pipeline(
             # Start target progress
             if progress_callback:
                 progress_callback.start_target(
-                    target, total_folds=config_handler.outer_folds, resumed_from=start_fold
+                    target, total_folds=config_handler.pipeline.outer_folds, resumed_from=start_fold
                 )
 
             # Pass groups to split if available
@@ -746,9 +761,9 @@ def perform_pipeline(
 
                 # Start fold progress
                 if progress_callback:
-                    progress_callback.start_fold(i + 1, config_handler.outer_folds)
+                    progress_callback.start_fold(i + 1, config_handler.pipeline.outer_folds)
 
-                if config_handler.verbosity == 2:
+                if config_handler.reproducibility_cfg.verbosity == 2:
                     config_handler.logger.info(f"Starting iteration: {i + 1}.")
 
                 # Validate fold has data
@@ -781,7 +796,7 @@ def perform_pipeline(
                     # Step 1: Hyperparameter tuning with GridSearchCV (optimizes ROC-AUC)
                     grid.fit(X=X_train_scaled, y=y_train, **fit_params)
 
-                    if config_handler.verbosity == 2:
+                    if config_handler.reproducibility_cfg.verbosity == 2:
                         config_handler.logger.info(f"Model {model} trained for iteration: {i + 1}.")
 
                     # Step 2: Get best estimator and hyperparameters from GridSearchCV
@@ -790,7 +805,7 @@ def perform_pipeline(
 
                     # Step 2.5: Post-hoc probability calibration (if enabled)
                     prob_calib_splits = None
-                    if config_handler.calibrate_probabilities:
+                    if config_handler.pipeline.calibrate_probabilities:
                         best_estimator, prob_calib_splits = _apply_probability_calibration(
                             best_estimator,
                             config_handler,
@@ -800,14 +815,14 @@ def perform_pipeline(
                             if datasetter.groups is not None
                             else None,
                         )
-                        if config_handler.verbosity == 2:
+                        if config_handler.reproducibility_cfg.verbosity == 2:
                             config_handler.logger.info(
                                 f"Probability calibration applied "
-                                f"(method={config_handler.probability_calibration_method})."
+                                f"(method={config_handler.pipeline.probability_calibration_method})."
                             )
 
                     # Step 3: Threshold optimization (if enabled)
-                    if config_handler.calibrate_threshold:
+                    if config_handler.pipeline.calibrate_threshold:
                         best_classifier, best_threshold, threshold_method = _optimize_threshold(
                             best_estimator,
                             config_handler,
@@ -828,7 +843,7 @@ def perform_pipeline(
                     y_pred, y_prob = _predict_with_threshold(
                         best_classifier,
                         X_test_scaled,
-                        config_handler.calibrate_threshold,
+                        config_handler.pipeline.calibrate_threshold,
                         threshold_method,
                         best_threshold,
                     )
@@ -873,7 +888,7 @@ def perform_pipeline(
                         progress_callback.complete_fold(i + 1, fold_metrics)
 
                 except Exception as e:
-                    if config_handler.verbosity:
+                    if config_handler.reproducibility_cfg.verbosity:
                         config_handler.logger.error(
                             f"Error in iteration {i + 1} for target {target}: {str(e)}"
                         )
@@ -894,7 +909,7 @@ def perform_pipeline(
                         progress_callback.complete_fold(i + 1, nan_metrics)
 
                 # Save models after each fold if enabled
-                if config_handler.save_models_enable:
+                if config_handler.output.save_models_enable:
                     target_metrics = {
                         "all_metrics": all_metrics[target],
                         "f1scores": f1scores[target],
@@ -917,25 +932,25 @@ def perform_pipeline(
                         metrics=target_metrics,
                         completed_folds=i + 1,
                         model_path=model_path,
-                        compression=config_handler.model_compression,
+                        compression=config_handler.output.model_compression,
                         fold_test_data=fold_test_data,
                     )
 
-                    if config_handler.verbosity == 2:
+                    if config_handler.reproducibility_cfg.verbosity == 2:
                         config_handler.logger.info(
                             f"Saved models after fold {i + 1} for {model} - {target}"
                         )
 
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.info(
                     f"Completed training for target {target} with model {model}."
                 )
 
             # Calculate summary metrics for progress callback
             if progress_callback:
-                if config_handler.outer_cv_repeats > 1:
-                    n_folds = config_handler.outer_folds
-                    n_repeats = config_handler.outer_cv_repeats
+                if config_handler.pipeline.outer_cv_repeats > 1:
+                    n_folds = config_handler.pipeline.outer_folds
+                    n_repeats = config_handler.pipeline.outer_cv_repeats
                     repeat_f1 = [
                         np.nanmean(f1scores[target][r * n_folds : (r + 1) * n_folds])
                         for r in range(n_repeats)
@@ -978,7 +993,7 @@ def perform_pipeline(
             mccs=mccs,
             cms=average_cms,
             aurocs=aurocs,
-            out_dir=config_handler.out_folder,
+            out_dir=config_handler.output.out_folder,
             model=model_safe_name,
         )
 
@@ -986,13 +1001,13 @@ def perform_pipeline(
         for target in Y.columns:
             target_safe_name = sanitize_name(target)
             metrics_output_path = (
-                Path(config_handler.out_folder)
+                Path(config_handler.output.out_folder)
                 / DIR_METRICS
                 / target_safe_name
                 / f"{model_safe_name}_metrics_detailed.csv"
             )
 
-            _compute_ci_metrics_for_target(
+            unique_idx, y_true_ci, y_pred_ci, y_prob_ci = _compute_ci_metrics_for_target(
                 target,
                 config_handler,
                 all_test_indices,
@@ -1003,12 +1018,39 @@ def perform_pipeline(
                 metrics_output_path,
             )
 
+            # Subgroup analysis (if subgroup columns are configured)
+            if datasetter.subgroup_data:
+                from respredai.core.subgroup import compute_subgroup_metrics, save_subgroup_metrics
+
+                for sg_col, sg_series in datasetter.subgroup_data.items():
+                    sg_values = sg_series.values[unique_idx]
+                    sg_df = compute_subgroup_metrics(
+                        y_true=y_true_ci,
+                        y_pred=y_pred_ci,
+                        y_prob=y_prob_ci,
+                        subgroup_values=sg_values,
+                        subgroup_column_name=sg_col,
+                    )
+                    sg_col_safe = sanitize_name(sg_col)
+                    sg_csv_path = (
+                        Path(config_handler.output.out_folder)
+                        / DIR_SUBGROUP
+                        / target_safe_name
+                        / f"{model_safe_name}_{sg_col_safe}_subgroup.csv"
+                    )
+                    save_subgroup_metrics(sg_df, sg_csv_path)
+
+                    if config_handler.reproducibility_cfg.verbosity:
+                        config_handler.logger.info(
+                            f"Saved subgroup metrics ({sg_col}) for {model} - {target}"
+                        )
+
             # Generate reliability curves for this model-target combination
             # Skip if no per-fold data available (e.g., loaded from saved models)
             if fold_y_true_calib[target] and fold_y_prob_calib[target]:
                 from respredai.visualization.reliability_curves import save_reliability_curves
 
-                calibration_dir = Path(config_handler.out_folder) / DIR_CALIBRATION
+                calibration_dir = Path(config_handler.output.out_folder) / DIR_CALIBRATION
                 n_total_folds = len(fold_y_true_calib[target])
                 save_reliability_curves(
                     y_true_list=fold_y_true_calib[target],
@@ -1016,27 +1058,27 @@ def perform_pipeline(
                     fold_labels=(
                         [
                             f"R{r + 1}-F{f + 1}"
-                            for r in range(config_handler.outer_cv_repeats)
-                            for f in range(config_handler.outer_folds)
+                            for r in range(config_handler.pipeline.outer_cv_repeats)
+                            for f in range(config_handler.pipeline.outer_folds)
                         ]
-                        if config_handler.outer_cv_repeats > 1
+                        if config_handler.pipeline.outer_cv_repeats > 1
                         else [f"Fold {i + 1}" for i in range(n_total_folds)]
                     ),
                     out_dir=calibration_dir,
                     model=model_safe_name,
                     target=target_safe_name,
                 )
-                if config_handler.verbosity:
+                if config_handler.reproducibility_cfg.verbosity:
                     config_handler.logger.info(
                         f"Generated reliability curves for {model} - {target}"
                     )
 
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.info(
                     f"Saved detailed metrics for {model} - {target} to {metrics_output_path}"
                 )
 
-        if config_handler.verbosity:
+        if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.info(f"Completed model {model}.")
 
         # Complete model progress
@@ -1048,7 +1090,7 @@ def perform_pipeline(
         progress_callback.stop()
 
     _generate_final_reports(config_handler, Y, datasetter)
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Analysis completed.")
 
 
@@ -1083,12 +1125,12 @@ def perform_temporal_validation(
     # Get temporal split indices
     train_idx, test_idx = get_temporal_split(
         temporal_values=datasetter.temporal_column_values,
-        split_date=config_handler.temporal_split_date,
-        split_ratio=config_handler.temporal_split_ratio,
+        split_date=config_handler.validation.temporal_split_date,
+        split_ratio=config_handler.validation.temporal_split_ratio,
         groups=datasetter.groups,
     )
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info(
             f"Temporal split: {len(train_idx)} train / {len(test_idx)} test samples"
         )
@@ -1104,7 +1146,7 @@ def perform_temporal_validation(
 
     # Build categorical column list and OHE transformer
     categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
-    ohe = _build_ohe_transformer(categorical_cols, config_handler.ohe_min_frequency)
+    ohe = _build_ohe_transformer(categorical_cols, config_handler.preprocessing.ohe_min_frequency)
 
     # Split data
     X_train_raw, X_test_raw = X.iloc[train_idx], X.iloc[test_idx]
@@ -1112,20 +1154,20 @@ def perform_temporal_validation(
     # OHE: fit on training data only
     X_train_ohe, X_test_ohe = _apply_ohe_and_clean(ohe, X_train_raw, X_test_raw)
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info(
             f"Temporal validation: data dimension (post-OHE): {X_train_ohe.shape}. "
             f"Training on {len(models)} models: {models}."
         )
 
     for model_name in models:
-        if config_handler.verbosity:
+        if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.info(f"[Temporal] Starting model: {model_name}")
 
         try:
             transformer, grid = _get_pipeline_for_model(model_name, config_handler, datasetter)
         except Exception as e:
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.error(
                     f"[Temporal] Failed to initialize model {model_name}: {e}"
                 )
@@ -1160,7 +1202,7 @@ def perform_temporal_validation(
 
                 # Post-hoc probability calibration (if enabled)
                 prob_calib_splits = None
-                if config_handler.calibrate_probabilities:
+                if config_handler.pipeline.calibrate_probabilities:
                     best_estimator, prob_calib_splits = _apply_probability_calibration(
                         best_estimator,
                         config_handler,
@@ -1172,7 +1214,7 @@ def perform_temporal_validation(
                     )
 
                 # Threshold optimization (if enabled)
-                if config_handler.calibrate_threshold:
+                if config_handler.pipeline.calibrate_threshold:
                     best_classifier, best_threshold, threshold_method = _optimize_threshold(
                         best_estimator,
                         config_handler,
@@ -1194,7 +1236,7 @@ def perform_temporal_validation(
                 y_pred, y_prob = _predict_with_threshold(
                     best_classifier,
                     X_test_scaled,
-                    config_handler.calibrate_threshold,
+                    config_handler.pipeline.calibrate_threshold,
                     threshold_method,
                     best_threshold,
                 )
@@ -1206,7 +1248,7 @@ def perform_temporal_validation(
                 model_safe = sanitize_name(model_name)
                 target_safe = sanitize_name(target)
                 metrics_path = (
-                    Path(config_handler.out_folder)
+                    Path(config_handler.output.out_folder)
                     / DIR_METRICS
                     / target_safe
                     / f"{model_safe}_temporal_metrics.csv"
@@ -1215,13 +1257,44 @@ def perform_temporal_validation(
                 save_metrics_summary(
                     metrics_dict=[temporal_metrics],
                     output_path=metrics_path,
-                    confidence=config_handler.confidence_level,
-                    n_bootstrap=config_handler.n_bootstrap,
-                    random_state=config_handler.seed,
+                    confidence=config_handler.pipeline.confidence_level,
+                    n_bootstrap=config_handler.pipeline.n_bootstrap,
+                    random_state=config_handler.reproducibility_cfg.seed,
                     y_true_all=y_test.values,
                     y_pred_all=y_pred,
                     y_prob_all=y_prob,
                 )
+
+                # Subgroup analysis for temporal validation
+                if datasetter.subgroup_data:
+                    from respredai.core.subgroup import (
+                        compute_subgroup_metrics,
+                        save_subgroup_metrics,
+                    )
+
+                    for sg_col, sg_series in datasetter.subgroup_data.items():
+                        sg_values = sg_series.values[test_idx]
+                        sg_df = compute_subgroup_metrics(
+                            y_true=y_test.values,
+                            y_pred=y_pred,
+                            y_prob=y_prob,
+                            subgroup_values=sg_values,
+                            subgroup_column_name=sg_col,
+                        )
+                        sg_col_safe = sanitize_name(sg_col)
+                        sg_csv_path = (
+                            Path(config_handler.output.out_folder)
+                            / DIR_SUBGROUP
+                            / target_safe
+                            / f"{model_safe}_{sg_col_safe}_temporal_subgroup.csv"
+                        )
+                        save_subgroup_metrics(sg_df, sg_csv_path)
+
+                        if config_handler.reproducibility_cfg.verbosity:
+                            config_handler.logger.info(
+                                f"[Temporal] Saved subgroup metrics ({sg_col}) "
+                                f"for {model_name} - {target}"
+                            )
 
                 # Store confusion matrix and metrics for visualization
                 cm = confusion_matrix(y_true=y_test, y_pred=y_pred, normalize="true", labels=[0, 1])
@@ -1237,7 +1310,7 @@ def perform_temporal_validation(
                 # Generate reliability curve for temporal split
                 from respredai.visualization.reliability_curves import save_reliability_curves
 
-                calibration_dir = Path(config_handler.out_folder) / DIR_CALIBRATION
+                calibration_dir = Path(config_handler.output.out_folder) / DIR_CALIBRATION
                 save_reliability_curves(
                     y_true_list=[y_test.values],
                     y_prob_list=[y_prob[:, 1]],
@@ -1247,7 +1320,7 @@ def perform_temporal_validation(
                     target=target_safe,
                 )
 
-                if config_handler.verbosity:
+                if config_handler.reproducibility_cfg.verbosity:
                     config_handler.logger.info(
                         f"[Temporal] {model_name} - {target}: "
                         f"AUROC={temporal_metrics['AUROC']:.3f}, "
@@ -1256,7 +1329,7 @@ def perform_temporal_validation(
                     )
 
             except Exception as e:
-                if config_handler.verbosity:
+                if config_handler.reproducibility_cfg.verbosity:
                     config_handler.logger.error(
                         f"[Temporal] Error for {model_name} - {target}: {e}"
                     )
@@ -1270,11 +1343,11 @@ def perform_temporal_validation(
                 mccs=temporal_mccs,
                 cms=temporal_cms,
                 aurocs=temporal_aurocs,
-                out_dir=config_handler.out_folder,
+                out_dir=config_handler.output.out_folder,
                 model=f"{sanitize_name(model_name)}_temporal",
             )
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("[Temporal] Temporal validation completed.")
 
 
@@ -1308,11 +1381,13 @@ def perform_training(
     categorical_cols = [col for col in X.columns if col not in datasetter.continuous_features]
 
     # OHE: fit on full dataset (no train/test split in perform_training)
-    ohe_transformer = _build_ohe_transformer(categorical_cols, config_handler.ohe_min_frequency)
+    ohe_transformer = _build_ohe_transformer(
+        categorical_cols, config_handler.preprocessing.ohe_min_frequency
+    )
     X = _apply_ohe_and_clean(ohe_transformer, X)
 
     # Create output directories
-    trained_models_dir = Path(config_handler.out_folder) / DIR_TRAINED_MODELS
+    trained_models_dir = Path(config_handler.output.out_folder) / DIR_TRAINED_MODELS
     trained_models_dir.mkdir(parents=True, exist_ok=True)
 
     # Store metadata for evaluation
@@ -1323,16 +1398,16 @@ def perform_training(
         "targets": list(Y.columns),
         "feature_names_transformed": list(X.columns),
         "feature_dtypes": {col: str(dtype) for col, dtype in datasetter.X.dtypes.items()},
-        "training_data_path": str(config_handler.data_path),
+        "training_data_path": str(config_handler.data_cfg.data_path),
         "training_timestamp": datetime.now().isoformat(),
         "config": {
-            "inner_folds": config_handler.inner_folds,
-            "calibrate_threshold": config_handler.calibrate_threshold,
-            "threshold_method": config_handler.threshold_method
-            if config_handler.calibrate_threshold
+            "inner_folds": config_handler.pipeline.inner_folds,
+            "calibrate_threshold": config_handler.pipeline.calibrate_threshold,
+            "threshold_method": config_handler.pipeline.threshold_method
+            if config_handler.pipeline.calibrate_threshold
             else None,
-            "seed": config_handler.seed,
-            "uncertainty_margin": config_handler.uncertainty_margin,
+            "seed": config_handler.reproducibility_cfg.seed,
+            "uncertainty_margin": config_handler.reproducibility_cfg.uncertainty_margin,
         },
     }
 
@@ -1369,7 +1444,7 @@ def perform_training(
 
             # Post-hoc probability calibration (if enabled)
             prob_calib_splits = None
-            if config_handler.calibrate_probabilities:
+            if config_handler.pipeline.calibrate_probabilities:
                 best_estimator, prob_calib_splits = _apply_probability_calibration(
                     best_estimator,
                     config_handler,
@@ -1378,15 +1453,15 @@ def perform_training(
                     groups=datasetter.groups,
                 )
 
-                if config_handler.verbosity == 2:
+                if config_handler.reproducibility_cfg.verbosity == 2:
                     config_handler.logger.info(
                         f"Probability calibration applied "
-                        f"(method={config_handler.probability_calibration_method})."
+                        f"(method={config_handler.pipeline.probability_calibration_method})."
                     )
 
             # Threshold optimization
             best_threshold = DEFAULT_THRESHOLD
-            if config_handler.calibrate_threshold:
+            if config_handler.pipeline.calibrate_threshold:
                 best_estimator, best_threshold, _ = _optimize_threshold(
                     best_estimator,
                     config_handler,
@@ -1410,7 +1485,7 @@ def perform_training(
                 "target_name": target,
                 "model_name": model,
                 "training_timestamp": datetime.now().isoformat(),
-                "uncertainty_margin": config_handler.uncertainty_margin,
+                "uncertainty_margin": config_handler.reproducibility_cfg.uncertainty_margin,
             }
 
             model_safe = sanitize_name(model)
@@ -1418,7 +1493,7 @@ def perform_training(
             model_path = trained_models_dir / f"{model_safe}_{target_safe}.joblib"
             joblib.dump(model_bundle, model_path, compress=3)
 
-            if config_handler.verbosity:
+            if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.info(f"Saved trained model: {model_path}")
 
             if progress_callback:
@@ -1442,11 +1517,11 @@ def perform_training(
     )
 
     manifest = create_reproducibility_manifest(config_handler, datasetter)
-    save_reproducibility_manifest(manifest, Path(config_handler.out_folder))
-    if config_handler.verbosity:
+    save_reproducibility_manifest(manifest, Path(config_handler.output.out_folder))
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Reproducibility manifest saved.")
 
-    if config_handler.verbosity:
+    if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Training completed.")
 
 

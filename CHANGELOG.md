@@ -2,6 +2,29 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.8.0] - 2026-03-25
+
+### Added
+- **Unified `[Metadata]` config section** with metadata column definitions:
+  - `group_column` (moved from `[Data]`)
+  - `temporal_column` (moved from `[Validation]` as `temporal_split_column`)
+  - `subgroup_columns` (new, comma-separated) for subgroup performance analysis
+- **Subgroup Performance Evaluation**: compute full metric set (AUROC, F1, MCC, Precision, Recall, ECE, MCE, Brier Score) per subgroup value
+  - Multiple subgroup columns supported simultaneously
+  - Sample size and class prevalence reported per subgroup
+  - Integrated with both CV and temporal validation pipelines
+  - Per-subgroup metrics saved as CSV in `subgroup_analysis/` directory
+  - "Subgroup Analysis" section added to HTML report with tables per subgroup column
+  - Warns when subgroups have fewer than 10 samples
+- **Signed Feature Importance Direction**: determine whether features are risk factors or protective
+  - New config flag: `compute_feature_direction` (default: `false`)
+  - Linear models (`coef_`): uses sign of coefficients directly (no extra computation)
+  - Tree-based models (RF, XGB, CatBoost): uses `shap.TreeExplainer`
+  - Other models: falls back to `shap.KernelExplainer` for signed SHAP values
+  - `Direction` column added to feature importance CSV (`Risk (+)` / `Protective (-)`)
+  - Feature importance plot color-coded by direction (firebrick = risk, seagreen = protective) with legend
+  - CLI flag: `respredai feature-importance --direction`
+
 ## [1.7.1] - 2026-03-23
 
 ### Added

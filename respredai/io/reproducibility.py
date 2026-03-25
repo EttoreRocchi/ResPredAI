@@ -85,27 +85,28 @@ def create_reproducibility_manifest(config_handler, datasetter) -> dict:
             "packages": get_package_versions(),
         },
         "data": {
-            "path": str(config_handler.data_path),
-            "sha256": hash_file(Path(config_handler.data_path)),
+            "path": str(config_handler.data_cfg.data_path),
+            "sha256": hash_file(Path(config_handler.data_cfg.data_path)),
             "shape": list(datasetter.data.shape),
             "features": list(datasetter.X.columns),
-            "targets": config_handler.targets,
+            "targets": config_handler.data_cfg.targets,
             "class_distribution": {
-                t: datasetter.data[t].value_counts().to_dict() for t in config_handler.targets
+                t: datasetter.data[t].value_counts().to_dict()
+                for t in config_handler.data_cfg.targets
             },
         },
         "config": {
-            "seed": config_handler.seed,
-            "outer_folds": config_handler.outer_folds,
-            "inner_folds": config_handler.inner_folds,
-            "models": config_handler.models,
-            "calibrate_threshold": config_handler.calibrate_threshold,
-            "threshold_method": config_handler.threshold_method,
-            "threshold_objective": config_handler.threshold_objective,
-            "calibrate_probabilities": config_handler.calibrate_probabilities,
-            "probability_calibration_method": config_handler.probability_calibration_method,
-            "probability_calibration_cv": config_handler.probability_calibration_cv,
-            "imputation_method": config_handler.imputation_method,
+            "seed": config_handler.reproducibility_cfg.seed,
+            "outer_folds": config_handler.pipeline.outer_folds,
+            "inner_folds": config_handler.pipeline.inner_folds,
+            "models": config_handler.pipeline.models,
+            "calibrate_threshold": config_handler.pipeline.calibrate_threshold,
+            "threshold_method": config_handler.pipeline.threshold_method,
+            "threshold_objective": config_handler.pipeline.threshold_objective,
+            "calibrate_probabilities": config_handler.pipeline.calibrate_probabilities,
+            "probability_calibration_method": config_handler.pipeline.probability_calibration_method,
+            "probability_calibration_cv": config_handler.pipeline.probability_calibration_cv,
+            "imputation_method": config_handler.imputation.method,
         },
     }
 

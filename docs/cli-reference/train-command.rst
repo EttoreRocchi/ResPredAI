@@ -74,7 +74,7 @@ The ``train`` command uses the same configuration file as ``run``, but some para
    * - ``continuous_features``
      - Yes
      - Features to scale
-   * - ``group_column``
+   * - ``group_column`` (in ``[Metadata]``)
      - Yes
      - Used for grouped CV during HP tuning
    * - ``models``
