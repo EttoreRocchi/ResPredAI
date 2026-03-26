@@ -291,6 +291,13 @@ output_folder/
 └── respredai.log                                   # Execution log (if verbosity > 0)
 ```
 
+## Notes
+
+> [!IMPORTANT]
+> **Intended use:** ResPredAI is a research software project developed for retrospective data analysis and experimentation with machine learning models for antimicrobial resistance prediction.
+> The software is provided for research and educational purposes only. It is not intended for clinical use or clinical decision-making and should not be used to guide patient care.
+
+
 ## Changelog
 
 See the full history of changes in the [CHANGELOG.md](CHANGELOG.md) file.
