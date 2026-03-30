@@ -21,6 +21,7 @@ Implementation of the pipeline described in:
   <strong><a href="https://ettorerocchi.github.io/ResPredAI/">Documentation</a></strong> |
   <strong><a href="#installation">Installation</a></strong> |
   <strong><a href="#quick-start">Quick Start</a></strong> |
+  <strong><a href="#pipeline-overview">Pipeline Overview</a></strong> |
   <strong><a href="#cli-commands">CLI Commands</a></strong> |
   <strong><a href="#citation">Citation</a></strong>
 </p>
@@ -148,6 +149,119 @@ validation_strategy = cv
 
 ```bash
 respredai run --config my_config.ini
+```
+
+## Pipeline Overview
+
+> *Amber nodes indicate optional steps controlled by configuration parameters.*
+
+### `respredai run` - Nested Cross-Validation
+
+```mermaid
+flowchart LR
+    A[Configuration Loading] --> B[Data Loading & Validation]
+    B --> C[OHE Template]
+    C --> D{Validation Strategy}
+
+    D -->|cv / both| E["Outer CV Loop (group-aware if configured)"]
+    D -->|temporal / both| F[Temporal Split]
+
+    E --> G["OHE (fit on train, transform test)"]
+    G --> H["Scaling (fit on train, transform test)"]
+    H --> I[GridSearchCV]
+    I --> J[Calibration & Threshold]
+    J --> K[Predict on Test Fold]
+    K --> L[Metrics + Bootstrap CIs]
+    L --> M[Subgroup Analysis]
+
+    F --> T1["OHE (fit on train, transform test)"]
+    T1 --> T2["Scaling (fit on train, transform test)"]
+    T2 --> T3[GridSearchCV + Calibration + Threshold]
+    T3 --> T4[Predict on Test Split]
+    T4 --> T5[Metrics + Bootstrap CIs]
+
+    M --> R[Generate Reports]
+    T5 --> R
+    R --> R1[Summary CSVs + HTML Report]
+    R --> R2[Confusion Matrices]
+    R --> R3[Calibration Curves]
+    R --> R4[Feature Importance]
+
+    style A fill:#e8e8e8,stroke:#999,color:#333
+    style B fill:#e8e8e8,stroke:#999,color:#333
+    style C fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style D fill:#ffe0b2,stroke:#f5a623,color:#333
+    style E fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style F fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style G fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style H fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style I fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style J fill:#fff3e0,stroke:#f5a623,color:#333
+    style K fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style L fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style M fill:#fff3e0,stroke:#f5a623,color:#333
+    style T1 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style T2 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style T3 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style T4 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style T5 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style R fill:#0dafb5,stroke:#098a8f,color:#fff
+    style R1 fill:#0dafb5,stroke:#098a8f,color:#fff
+    style R2 fill:#0dafb5,stroke:#098a8f,color:#fff
+    style R3 fill:#0dafb5,stroke:#098a8f,color:#fff
+    style R4 fill:#fff3e0,stroke:#f5a623,color:#333
+```
+
+
+### `respredai train` - Train for Deployment
+
+```mermaid
+flowchart LR
+    A[Configuration Loading] --> B[Data Loading & Validation]
+    B --> C[OHE on Full Data]
+    C --> D[For Each Model × Target]
+    D --> E[Feature Scaling]
+    E --> F[GridSearchCV]
+    F --> G[Calibration & Threshold]
+    G --> H[Save Model Bundle]
+    H --> I["Output: model + transformer + OHE + threshold + metadata"]
+
+    style A fill:#e8e8e8,stroke:#999,color:#333
+    style B fill:#e8e8e8,stroke:#999,color:#333
+    style C fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style D fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style E fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style F fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style G fill:#fff3e0,stroke:#f5a623,color:#333
+    style H fill:#0dafb5,stroke:#098a8f,color:#fff
+    style I fill:#0dafb5,stroke:#098a8f,color:#fff
+```
+
+
+### `respredai evaluate` - Cross-Dataset Evaluation
+
+```mermaid
+flowchart LR
+    A[Load Training Metadata] --> B[Load New Data + Validate Features]
+    B --> C[For Each Trained Model]
+    C --> D["OHE (fitted on training data, transform new data)"]
+    D --> E["Scaling (fitted on training data, transform new data)"]
+    E --> F[Predict with Saved Threshold]
+    F --> G[Metrics vs Ground Truth]
+    G --> H[Uncertainty Scores]
+    H --> I[Predictions + Metrics CSVs]
+    I --> J[Evaluation Summary]
+
+    style A fill:#e8e8e8,stroke:#999,color:#333
+    style B fill:#e8e8e8,stroke:#999,color:#333
+    style C fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style D fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style E fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style F fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style G fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style H fill:#fff3e0,stroke:#f5a623,color:#333
+    style I fill:#0dafb5,stroke:#098a8f,color:#fff
+    style J fill:#0dafb5,stroke:#098a8f,color:#fff
 ```
 
 ## CLI Commands
