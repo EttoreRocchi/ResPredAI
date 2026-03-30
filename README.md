@@ -153,7 +153,7 @@ respredai run --config my_config.ini
 
 ## Pipeline Overview
 
-> *Amber nodes indicate optional steps controlled by configuration parameters.*
+> *Amber nodes indicate optional steps controlled by configuration parameters. All pipelines are executed for each model × target combination.*
 
 ### `respredai run` - Nested Cross-Validation
 
@@ -168,7 +168,7 @@ flowchart LR
 
     E --> G["OHE (fit on train, transform test)"]
     G --> H["Scaling (fit on train, transform test)"]
-    H --> I[GridSearchCV]
+    H --> I[Hyperparameter Tuning - Inner CV]
     I --> J[Calibration & Threshold]
     J --> K[Predict on Test Fold]
     K --> L[Metrics + Bootstrap CIs]
@@ -176,8 +176,9 @@ flowchart LR
 
     F --> T1["OHE (fit on train, transform test)"]
     T1 --> T2["Scaling (fit on train, transform test)"]
-    T2 --> T3[GridSearchCV + Calibration + Threshold]
-    T3 --> T4[Predict on Test Split]
+    T2 --> T3[Hyperparameter Tuning - Inner CV]
+    T3 --> T6[Calibration & Threshold]
+    T6 --> T4[Predict on Test Split]
     T4 --> T5[Metrics + Bootstrap CIs]
 
     M --> R[Generate Reports]
@@ -203,6 +204,7 @@ flowchart LR
     style T1 fill:#b2ebf2,stroke:#0dafb5,color:#333
     style T2 fill:#b2ebf2,stroke:#0dafb5,color:#333
     style T3 fill:#b2ebf2,stroke:#0dafb5,color:#333
+    style T6 fill:#fff3e0,stroke:#f5a623,color:#333
     style T4 fill:#b2ebf2,stroke:#0dafb5,color:#333
     style T5 fill:#b2ebf2,stroke:#0dafb5,color:#333
     style R fill:#0dafb5,stroke:#098a8f,color:#fff
@@ -219,9 +221,8 @@ flowchart LR
 flowchart LR
     A[Configuration Loading] --> B[Data Loading & Validation]
     B --> C[OHE on Full Data]
-    C --> D[For Each Model × Target]
-    D --> E[Feature Scaling]
-    E --> F[GridSearchCV]
+    C --> E[Feature Scaling]
+    E --> F[Hyperparameter Tuning - Inner CV]
     F --> G[Calibration & Threshold]
     G --> H[Save Model Bundle]
     H --> I["Output: model + transformer + OHE + threshold + metadata"]
@@ -229,7 +230,6 @@ flowchart LR
     style A fill:#e8e8e8,stroke:#999,color:#333
     style B fill:#e8e8e8,stroke:#999,color:#333
     style C fill:#b2ebf2,stroke:#0dafb5,color:#333
-    style D fill:#b2ebf2,stroke:#0dafb5,color:#333
     style E fill:#b2ebf2,stroke:#0dafb5,color:#333
     style F fill:#b2ebf2,stroke:#0dafb5,color:#333
     style G fill:#fff3e0,stroke:#f5a623,color:#333
@@ -243,8 +243,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[Load Training Metadata] --> B[Load New Data + Validate Features]
-    B --> C[For Each Trained Model]
-    C --> D["OHE (fitted on training data, transform new data)"]
+    B --> D["OHE (fitted on training data, transform new data)"]
     D --> E["Scaling (fitted on training data, transform new data)"]
     E --> F[Predict with Saved Threshold]
     F --> G[Metrics vs Ground Truth]
@@ -254,7 +253,6 @@ flowchart LR
 
     style A fill:#e8e8e8,stroke:#999,color:#333
     style B fill:#e8e8e8,stroke:#999,color:#333
-    style C fill:#b2ebf2,stroke:#0dafb5,color:#333
     style D fill:#b2ebf2,stroke:#0dafb5,color:#333
     style E fill:#b2ebf2,stroke:#0dafb5,color:#333
     style F fill:#b2ebf2,stroke:#0dafb5,color:#333
