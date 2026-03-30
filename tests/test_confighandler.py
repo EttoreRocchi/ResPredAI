@@ -378,14 +378,14 @@ class TestPreprocessingConfig:
         assert config.preprocessing.ohe_min_frequency == 10
         assert isinstance(config.preprocessing.ohe_min_frequency, int)
 
-    def test_ohe_min_frequency_invalid_zero(self, tmp_path):
-        """Test that ohe_min_frequency = 0 raises ValueError."""
+    def test_ohe_min_frequency_zero_disables(self, tmp_path):
+        """Test that ohe_min_frequency = 0 is treated as disabled (None)."""
         config_text = self._make_base_config("[Preprocessing]\nohe_min_frequency = 0")
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
-        with pytest.raises(ValueError, match="ohe_min_frequency must be positive"):
-            ConfigHandler(str(config_path))
+        config = ConfigHandler(str(config_path))
+        assert config.preprocessing.ohe_min_frequency is None
 
     def test_ohe_min_frequency_invalid_negative(self, tmp_path):
         """Test that negative ohe_min_frequency raises ValueError."""
@@ -393,7 +393,7 @@ class TestPreprocessingConfig:
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
-        with pytest.raises(ValueError, match="ohe_min_frequency must be positive"):
+        with pytest.raises(ValueError, match="ohe_min_frequency must be non-negative"):
             ConfigHandler(str(config_path))
 
 

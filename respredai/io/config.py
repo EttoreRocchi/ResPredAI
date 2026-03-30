@@ -285,8 +285,11 @@ class ConfigHandler:
         ohe_min_freq_str = self._get_optional_str(config, "Preprocessing", "ohe_min_frequency")
         if ohe_min_freq_str is not None:
             ohe_val = float(ohe_min_freq_str)
-            if ohe_val <= 0:
-                raise ValueError(f"ohe_min_frequency must be positive, got {ohe_val}")
+            if ohe_val < 0:
+                raise ValueError(f"ohe_min_frequency must be non-negative, got {ohe_val}")
+            if ohe_val == 0:
+                self.preprocessing = PreprocessingConfig(ohe_min_frequency=None)
+                return
             if ohe_val >= 1:
                 ohe_val = int(ohe_val)
             self.preprocessing = PreprocessingConfig(ohe_min_frequency=ohe_val)

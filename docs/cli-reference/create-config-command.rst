@@ -308,7 +308,7 @@ Use ``respredai list-models`` to see all available models.
   - Categories appearing below this threshold are grouped into an "infrequent" category
   - Values in (0, 1): proportion of samples (e.g., 0.05 = at least 5% of samples)
   - Values >= 1: absolute count (e.g., 10 = at least 10 occurrences)
-  - Omit or comment out to disable (keep all categories)
+  - Set to 0, omit, or comment out to disable (keep all categories)
   - Useful for reducing noise from rare categorical values and preventing overfitting
 
 10. Adjust Resources
