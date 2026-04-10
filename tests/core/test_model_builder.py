@@ -243,6 +243,7 @@ class TestPipelineIntegration:
         accuracy = (predictions == y).mean()
         assert accuracy > 0.8
 
+    @pytest.mark.slow
     def test_rf_pipeline_fits_and_predicts(self):
         """Test that RF pipeline can fit and predict."""
         transformer, grid = get_pipeline(

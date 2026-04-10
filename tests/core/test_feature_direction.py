@@ -17,25 +17,25 @@ from respredai.visualization.feature_importance import (
 def trained_lr():
     """Train a simple logistic regression model."""
     rng = np.random.RandomState(42)
-    X = rng.randn(100, 3)
+    feature_names = ["risk_feat", "protect_feat", "weak_feat"]
+    X = pd.DataFrame(rng.randn(100, 3), columns=feature_names)
     # Feature 0 is risk (+), feature 1 is protective (-), feature 2 is weak
-    y = ((X[:, 0] * 2 - X[:, 1] * 1.5 + rng.randn(100) * 0.3) > 0).astype(int)
+    y = ((X.iloc[:, 0] * 2 - X.iloc[:, 1] * 1.5 + rng.randn(100) * 0.3) > 0).astype(int)
     model = LogisticRegression(random_state=42, max_iter=1000)
     model.fit(X, y)
-    feature_names = ["risk_feat", "protect_feat", "weak_feat"]
-    return model, X, y, feature_names
+    return model, X.values, y, feature_names
 
 
 @pytest.fixture
 def trained_rf():
     """Train a simple random forest model."""
     rng = np.random.RandomState(42)
-    X = rng.randn(200, 3)
-    y = ((X[:, 0] * 2 - X[:, 1] * 1.5 + rng.randn(200) * 0.3) > 0).astype(int)
+    feature_names = ["risk_feat", "protect_feat", "weak_feat"]
+    X = pd.DataFrame(rng.randn(200, 3), columns=feature_names)
+    y = ((X.iloc[:, 0] * 2 - X.iloc[:, 1] * 1.5 + rng.randn(200) * 0.3) > 0).astype(int)
     model = RandomForestClassifier(n_estimators=50, random_state=42)
     model.fit(X, y)
-    feature_names = ["risk_feat", "protect_feat", "weak_feat"]
-    return model, X, y, feature_names
+    return model, X.values, y, feature_names
 
 
 class TestComputeFeatureDirection:

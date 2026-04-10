@@ -47,6 +47,12 @@ pre-commit:  ## Run the full pre-commit suite on all files
 test:  ## Run tests
 	@pytest $(TESTS)/
 
+test-fast:  ## Run tests but the ones marked as 'slow'
+	@pytest -m "not slow" $(TESTS)/
+
+test-slow:  ## Run tests marked as 'slow'
+	@pytest -m "slow" $(TESTS)/
+
 # Example runs
 
 run-example:  ## Run basic CV pipeline (threshold + calibration)

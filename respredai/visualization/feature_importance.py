@@ -14,6 +14,7 @@ from sklearn.model_selection import TunedThresholdClassifierCV
 
 from respredai.core.constants import (
     DIR_FEATURE_IMPORTANCE,
+    LINEAR_MODELS,
     TREE_BASED_MODELS,
     sanitize_name,
 )
@@ -42,28 +43,26 @@ def unwrap_calibrated_model(model):
     return model
 
 
-def has_feature_importance(model) -> bool:
+def has_feature_importance(model, model_name: str) -> bool:
     """
     Check if a model has native feature importance or coefficients.
-
-    Unwraps calibration wrappers (CalibratedClassifierCV, TunedThresholdClassifierCV)
-    to check the underlying model.
 
     Parameters
     ----------
     model : sklearn estimator
         The trained model (possibly wrapped).
+    model_name : str
+        Model identifier (e.g. ``"LR"``, ``"RF"``).
 
     Returns
     -------
     bool
-        True if underlying model has `feature_importances_` or `coef_` attribute.
+        True if the model belongs to TREE_BASED_MODELS or LINEAR_MODELS.
     """
-    inner_model = unwrap_calibrated_model(model)
-    return hasattr(inner_model, "feature_importances_") or hasattr(inner_model, "coef_")
+    return model_name in TREE_BASED_MODELS or model_name in LINEAR_MODELS
 
 
-def get_feature_importance(model, feature_names: list[str]) -> Optional[pd.Series]:
+def get_feature_importance(model, feature_names: list[str], model_name: str) -> Optional[pd.Series]:
     """
     Extract native feature importance or coefficients from a model.
 
@@ -76,6 +75,8 @@ def get_feature_importance(model, feature_names: list[str]) -> Optional[pd.Serie
         The trained model (possibly wrapped).
     feature_names : list
         List of feature names.
+    model_name : str
+        Model identifier (e.g. ``"LR"``, ``"RF"``).
 
     Returns
     -------
@@ -88,9 +89,9 @@ def get_feature_importance(model, feature_names: list[str]) -> Optional[pd.Serie
 
     inner_model = unwrap_calibrated_model(model)
 
-    if hasattr(inner_model, "feature_importances_"):
+    if model_name in TREE_BASED_MODELS:
         importances = inner_model.feature_importances_
-    elif hasattr(inner_model, "coef_"):
+    elif model_name in LINEAR_MODELS:
         coef = inner_model.coef_
         if len(coef.shape) > 1:
             # For multi-class, average absolute coefficients across classes
@@ -106,11 +107,15 @@ def compute_shap_importance(
     model,
     X_test: np.ndarray,
     feature_names: list[str],
+    model_name: str,
     background_size: int = 100,
     seed: Optional[int] = None,
 ) -> Optional[pd.Series]:
     """
     Compute SHAP values for a model on test data.
+
+    Uses TreeExplainer for tree-based models (fast, exact) and
+    KernelExplainer for all other models (model-agnostic).
 
     Parameters
     ----------
@@ -120,6 +125,8 @@ def compute_shap_importance(
         Test data (scaled).
     feature_names : list
         Feature names.
+    model_name : str
+        Model identifier (e.g. ``"RF"``, ``"MLP"``).
     background_size : int
         Number of background samples for SHAP (default: 100).
     seed : int, optional
@@ -134,8 +141,19 @@ def compute_shap_importance(
         return None
 
     try:
+        inner_model = unwrap_calibrated_model(model)
         X_df = pd.DataFrame(X_test, columns=feature_names)
 
+        # Tree-based models: use TreeExplainer (fast, exact)
+        if model_name in TREE_BASED_MODELS:
+            explainer = shap.TreeExplainer(inner_model)
+            shap_values = explainer.shap_values(X_df)
+            if isinstance(shap_values, list):
+                shap_values = shap_values[1]  # class 1 (resistant)
+            mean_abs_shap = np.abs(shap_values).mean(axis=0)
+            return pd.Series(mean_abs_shap, index=feature_names)
+
+        # All other models: KernelExplainer (model-agnostic)
         if len(X_df) > background_size:
             background = shap.sample(X_df, background_size, random_state=seed)
         else:
@@ -221,7 +239,7 @@ def compute_feature_direction(
     inner_model = unwrap_calibrated_model(model)
 
     # Linear models: use sign of coefficients directly (fast, no extra computation)
-    if hasattr(inner_model, "coef_"):
+    if model_name in LINEAR_MODELS:
         coef = inner_model.coef_
         if len(coef.shape) > 1:
             # Binary classification: use class-1 coefficients
@@ -233,7 +251,7 @@ def compute_feature_direction(
         X_arr = np.asarray(X_test)
 
         # Tree-based models: use TreeExplainer (fast, exact)
-        if model_name in TREE_BASED_MODELS and hasattr(inner_model, "predict"):
+        if model_name in TREE_BASED_MODELS:
             try:
                 explainer = shap.TreeExplainer(inner_model)
                 shap_values = explainer.shap_values(X_df)
@@ -436,11 +454,11 @@ def extract_feature_importance_from_models(
         return None
 
     # Try native feature importance first
-    if has_feature_importance(first_model):
+    if has_feature_importance(first_model, model_name):
         inner_model = unwrap_calibrated_model(first_model)
         n_features = (
             inner_model.coef_.shape[1]
-            if hasattr(inner_model, "coef_")
+            if model_name in LINEAR_MODELS
             else len(inner_model.feature_importances_)
         )
         feature_names = _resolve_feature_names(
@@ -453,12 +471,14 @@ def extract_feature_importance_from_models(
                 continue
             inner = unwrap_calibrated_model(model)
             n_feat = (
-                inner.coef_.shape[1] if hasattr(inner, "coef_") else len(inner.feature_importances_)
+                inner.coef_.shape[1]
+                if model_name in LINEAR_MODELS
+                else len(inner.feature_importances_)
             )
             fold_td = [fold_test_data[fold_idx]] if fold_idx < len(fold_test_data) else []
             fold_tr = [fold_transformers[fold_idx]] if fold_idx < len(fold_transformers) else []
             fold_names = _resolve_feature_names(model, fold_td, fold_tr, n_feat)
-            importance = get_feature_importance(model, fold_names)
+            importance = get_feature_importance(model, fold_names, model_name)
             if importance is not None:
                 importances_list.append(importance)
 
@@ -507,7 +527,9 @@ def extract_feature_importance_from_models(
             if feature_names is None:
                 feature_names = feat_names
 
-            shap_importance = compute_shap_importance(model, X_test, feat_names, seed=seed)
+            shap_importance = compute_shap_importance(
+                model, X_test, feat_names, model_name=model_name or "", seed=seed
+            )
             if shap_importance is not None:
                 importances_list.append(shap_importance)
 

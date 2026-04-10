@@ -287,31 +287,31 @@ class TestThresholdObjectiveConfig:
         with pytest.raises(ValueError, match="me_cost must be positive"):
             ConfigHandler(str(config_path))
 
-    def test_uncertainty_margin_parsing(self, tmp_path):
-        """Test that uncertainty margin is correctly parsed."""
-        config_text = self._make_base_config(extra_sections="[Uncertainty]\nmargin = 0.15")
+    def test_conformal_alpha_parsing(self, tmp_path):
+        """Test that conformal alpha is correctly parsed."""
+        config_text = self._make_base_config(extra_sections="[Uncertainty]\nalpha = 0.15")
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.reproducibility_cfg.uncertainty_margin == 0.15
+        assert config.reproducibility_cfg.conformal_alpha == 0.15
 
-    def test_default_uncertainty_margin(self, tmp_path):
-        """Test that uncertainty margin defaults to 0.1."""
+    def test_default_conformal_alpha(self, tmp_path):
+        """Test that conformal alpha defaults to 0.1."""
         config_text = self._make_base_config()
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
         config = ConfigHandler(str(config_path))
-        assert config.reproducibility_cfg.uncertainty_margin == 0.1
+        assert config.reproducibility_cfg.conformal_alpha == 0.1
 
-    def test_invalid_uncertainty_margin_raises(self, tmp_path):
-        """Test that out-of-range uncertainty margin raises ValueError."""
-        config_text = self._make_base_config(extra_sections="[Uncertainty]\nmargin = 0.6")
+    def test_invalid_conformal_alpha_raises(self, tmp_path):
+        """Test that out-of-range conformal alpha raises ValueError."""
+        config_text = self._make_base_config(extra_sections="[Uncertainty]\nalpha = 0.6")
         config_path = tmp_path / "config.ini"
         config_path.write_text(config_text)
 
-        with pytest.raises(ValueError, match="Uncertainty margin must be"):
+        with pytest.raises(ValueError, match=r"\[Uncertainty\] alpha must be"):
             ConfigHandler(str(config_path))
 
 

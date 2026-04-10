@@ -269,24 +269,27 @@ def _aggregate_confusion_matrices(
         n_repeats = config_handler.pipeline.outer_cv_repeats
         average_cms = {}
         for target in Y.columns:
-            repeat_cms = [
-                np.nanmean(cms[target][r * n_folds : (r + 1) * n_folds], axis=0)
-                for r in range(n_repeats)
-            ]
-            average_cms[target] = pd.DataFrame(
-                data=np.nanmean(repeat_cms, axis=0),
-                index=["Susceptible", "Resistant"],
-                columns=["Susceptible", "Resistant"],
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                repeat_cms = [
+                    np.nanmean(cms[target][r * n_folds : (r + 1) * n_folds], axis=0)
+                    for r in range(n_repeats)
+                ]
+                average_cms[target] = pd.DataFrame(
+                    data=np.nanmean(repeat_cms, axis=0),
+                    index=["Susceptible", "Resistant"],
+                    columns=["Susceptible", "Resistant"],
+                )
     else:
-        average_cms = {
-            target: pd.DataFrame(
-                data=np.nanmean(cms[target], axis=0),
-                index=["Susceptible", "Resistant"],
-                columns=["Susceptible", "Resistant"],
-            )
-            for target in Y.columns
-        }
+        average_cms = {}
+        for target in Y.columns:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                average_cms[target] = pd.DataFrame(
+                    data=np.nanmean(cms[target], axis=0),
+                    index=["Susceptible", "Resistant"],
+                    columns=["Susceptible", "Resistant"],
+                )
     return average_cms
 
 
@@ -560,6 +563,7 @@ def _make_nan_metrics() -> dict:
         "AUROC": np.nan,
         "VME": np.nan,
         "ME": np.nan,
+        "FOR": np.nan,
         "Brier Score": np.nan,
         "ECE": np.nan,
         "MCE": np.nan,
@@ -645,7 +649,6 @@ def perform_pipeline(
         # Per-fold data for reliability curves (lists of arrays, one per fold)
         fold_y_true_calib = {}
         fold_y_prob_calib = {}
-
         for target in Y.columns:
             # Check for existing saved models
             model_path = get_model_path(config_handler.output.out_folder, model, target)
@@ -664,8 +667,8 @@ def perform_pipeline(
                 if model_data is not None:
                     completed_folds = model_data.get("completed_folds", 0)
 
-                    # Check if all folds are completed
-                    if completed_folds >= config_handler.pipeline.outer_folds:
+                    # Check if all folds (across all repeats) are completed
+                    if completed_folds >= total_outer_iterations:
                         if config_handler.reproducibility_cfg.verbosity:
                             config_handler.logger.info(
                                 f"All folds completed for {model} - {target}. Loading from saved models."
@@ -716,6 +719,7 @@ def perform_pipeline(
                         all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
                         all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
+                        # Conformal results are not saved in checkpoints; start fresh
 
                         if config_handler.reproducibility_cfg.verbosity:
                             config_handler.logger.info(
@@ -848,8 +852,71 @@ def perform_pipeline(
                         best_threshold,
                     )
 
+                    # Step 5: Post-hoc conformal calibration (CV+ on training fold)
+                    from sklearn.base import clone as sklearn_clone
+                    from sklearn.model_selection import cross_val_predict
+                    from sklearn.pipeline import Pipeline as SkPipeline
+
+                    from respredai.core.metrics import (
+                        compute_conformal_qhat,
+                        conformal_prediction_sets,
+                    )
+
+                    alpha = config_handler.reproducibility_cfg.conformal_alpha
+                    conformal_pipe = SkPipeline(
+                        [
+                            ("scaler", sklearn_clone(fold_transformer)),
+                            ("classifier", sklearn_clone(best_classifier)),
+                        ]
+                    )
+                    if datasetter.groups is not None:
+                        conformal_cv = StratifiedGroupKFold(
+                            n_splits=config_handler.pipeline.inner_folds,
+                            shuffle=True,
+                            random_state=config_handler.reproducibility_cfg.seed,
+                        )
+                        conformal_cv_params = {"groups": datasetter.groups[train_set]}
+                    else:
+                        conformal_cv = StratifiedKFold(
+                            n_splits=config_handler.pipeline.inner_folds,
+                            shuffle=True,
+                            random_state=config_handler.reproducibility_cfg.seed,
+                        )
+                        conformal_cv_params = {}
+
+                    y_prob_calib = cross_val_predict(
+                        conformal_pipe,
+                        X_train_ohe,
+                        y_train,
+                        cv=conformal_cv,
+                        method="predict_proba",
+                        **conformal_cv_params,
+                    )
+                    fold_q_hat = compute_conformal_qhat(y_train.values, y_prob_calib, alpha=alpha)
+
+                    # Apply fold_q_hat to outer test predictions (out-of-sample)
+                    fold_set_sizes, _ = conformal_prediction_sets(y_prob, fold_q_hat)
+                    include_0 = (1 - y_prob[:, 0]) <= fold_q_hat[0]
+                    include_1 = (1 - y_prob[:, 1]) <= fold_q_hat[1]
+                    fold_in_set = np.where(y_test.values == 0, include_0, include_1)
+
                     # Calculate comprehensive metrics
                     fold_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
+
+                    # Add per-fold conformal metrics (get mean/std/SE via save_metrics_summary)
+                    fold_metrics["empirical_coverage"] = float(fold_in_set.mean())
+                    fold_metrics["avg_set_size"] = float(fold_set_sizes.mean())
+                    fold_metrics["fraction_uncertain"] = float((fold_set_sizes == 2).mean())
+                    fold_metrics["fraction_empty"] = float((fold_set_sizes == 0).mean())
+                    for cls in (0, 1):
+                        cls_mask = y_test.values == cls
+                        if cls_mask.sum() > 0:
+                            fold_metrics[f"empirical_coverage_class_{cls}"] = float(
+                                fold_in_set[cls_mask].mean()
+                            )
+                        else:
+                            fold_metrics[f"empirical_coverage_class_{cls}"] = float("nan")
+
                     all_metrics[target].append(fold_metrics)
 
                     # Store sample-level predictions for bootstrap CI
@@ -974,11 +1041,11 @@ def perform_pipeline(
                 else:
                     summary_metrics = {
                         "F1 (weighted)": np.nanmean(f1scores[target]),
-                        "F1_std": np.nanstd(f1scores[target]),
+                        "F1_std": np.nanstd(f1scores[target], ddof=1),
                         "MCC": np.nanmean(mccs[target]),
-                        "MCC_std": np.nanstd(mccs[target]),
+                        "MCC_std": np.nanstd(mccs[target], ddof=1),
                         "AUROC": np.nanmean(aurocs[target]),
-                        "AUROC_std": np.nanstd(aurocs[target]),
+                        "AUROC_std": np.nanstd(aurocs[target], ddof=1),
                     }
                 progress_callback.complete_target(target, summary_metrics)
 
@@ -1017,6 +1084,15 @@ def perform_pipeline(
                 all_metrics,
                 metrics_output_path,
             )
+
+            # Append guaranteed_coverage constant (CV+ bound, not fold-varying)
+            alpha = config_handler.reproducibility_cfg.conformal_alpha
+            guaranteed_row = pd.DataFrame(
+                [{"Metric": "guaranteed_coverage", "Mean": 1 - 2 * alpha}]
+            )
+            existing_df = pd.read_csv(metrics_output_path)
+            combined_df = pd.concat([existing_df, guaranteed_row], ignore_index=True)
+            combined_df.to_csv(metrics_output_path, index=False)
 
             # Subgroup analysis (if subgroup columns are configured)
             if datasetter.subgroup_data:
@@ -1265,6 +1341,61 @@ def perform_temporal_validation(
                     y_prob_all=y_prob,
                 )
 
+                # Conformal prediction diagnostics for temporal validation
+                from sklearn.base import clone as sklearn_clone
+                from sklearn.model_selection import cross_val_predict
+                from sklearn.pipeline import Pipeline as SkPipeline
+
+                from respredai.core.metrics import (
+                    compute_conformal_qhat,
+                    conformal_coverage_report,
+                )
+
+                alpha = config_handler.reproducibility_cfg.conformal_alpha
+                # Wrap scaler + classifier in a Pipeline so each CV fold refits
+                # the scaler on its own training split, avoiding scaling leakage.
+                conformal_pipe = SkPipeline(
+                    [
+                        ("scaler", sklearn_clone(transformer)),
+                        ("classifier", sklearn_clone(best_estimator)),
+                    ]
+                )
+                if datasetter.groups is not None:
+                    temporal_inner_cv = StratifiedGroupKFold(
+                        n_splits=config_handler.pipeline.inner_folds,
+                        shuffle=True,
+                        random_state=config_handler.reproducibility_cfg.seed,
+                    )
+                    conformal_cv_params = {"groups": datasetter.groups[train_idx]}
+                else:
+                    temporal_inner_cv = StratifiedKFold(
+                        n_splits=config_handler.pipeline.inner_folds,
+                        shuffle=True,
+                        random_state=config_handler.reproducibility_cfg.seed,
+                    )
+                    conformal_cv_params = {}
+                y_prob_train_oof = cross_val_predict(
+                    conformal_pipe,
+                    X_train_ohe,
+                    y_train,
+                    cv=temporal_inner_cv,
+                    method="predict_proba",
+                    **conformal_cv_params,
+                )
+                q_hat = compute_conformal_qhat(y_train.values, y_prob_train_oof, alpha=alpha)
+                # CV+ guarantee is 1-2α; temporal shift may further reduce coverage.
+                conformal_report = conformal_coverage_report(
+                    y_test.values, y_prob, q_hat, alpha=alpha, is_cv_plus=True
+                )
+
+                # Append conformal metrics to temporal metrics CSV
+                conformal_rows = pd.DataFrame(
+                    [{"Metric": k, "Mean": v} for k, v in conformal_report.items()]
+                )
+                existing_df = pd.read_csv(metrics_path)
+                combined_df = pd.concat([existing_df, conformal_rows], ignore_index=True)
+                combined_df.to_csv(metrics_path, index=False)
+
                 # Subgroup analysis for temporal validation
                 if datasetter.subgroup_data:
                     from respredai.core.subgroup import (
@@ -1407,7 +1538,7 @@ def perform_training(
             if config_handler.pipeline.calibrate_threshold
             else None,
             "seed": config_handler.reproducibility_cfg.seed,
-            "uncertainty_margin": config_handler.reproducibility_cfg.uncertainty_margin,
+            "conformal_alpha": config_handler.reproducibility_cfg.conformal_alpha,
         },
     }
 
@@ -1473,6 +1604,33 @@ def perform_training(
                     prob_calib_splits=prob_calib_splits,
                 )
 
+            # Compute conformal q_hat from OOF predictions on training data.
+            # Wrap scaler + classifier in a Pipeline so each CV fold refits the
+            # scaler on its own training split, avoiding scaling leakage.
+            from sklearn.base import clone as sklearn_clone
+            from sklearn.model_selection import cross_val_predict
+            from sklearn.pipeline import Pipeline as SkPipeline
+
+            from respredai.core.metrics import compute_conformal_qhat
+
+            conformal_pipe = SkPipeline(
+                [
+                    ("scaler", sklearn_clone(transformer)),
+                    ("classifier", sklearn_clone(best_estimator)),
+                ]
+            )
+            inner_cv = StratifiedKFold(
+                n_splits=config_handler.pipeline.inner_folds,
+                shuffle=True,
+                random_state=config_handler.reproducibility_cfg.seed,
+            )
+            y_prob_oof = cross_val_predict(
+                conformal_pipe, X, y, cv=inner_cv, method="predict_proba"
+            )
+            conformal_q_hat = compute_conformal_qhat(
+                y.values, y_prob_oof, alpha=config_handler.reproducibility_cfg.conformal_alpha
+            )
+
             # Save model bundle
             model_bundle = {
                 "model": best_estimator,
@@ -1485,7 +1643,8 @@ def perform_training(
                 "target_name": target,
                 "model_name": model,
                 "training_timestamp": datetime.now().isoformat(),
-                "uncertainty_margin": config_handler.reproducibility_cfg.uncertainty_margin,
+                "conformal_q_hat": conformal_q_hat,
+                "conformal_alpha": config_handler.reproducibility_cfg.conformal_alpha,
             }
 
             model_safe = sanitize_name(model)
@@ -1601,7 +1760,7 @@ def perform_evaluation(
         transformer = bundle["transformer"]
         bundle_ohe = bundle["ohe_transformer"]
         threshold = bundle["threshold"]
-        uncertainty_margin = bundle.get("uncertainty_margin", 0.1)
+        conformal_q_hat = bundle["conformal_q_hat"]
 
         if target_name not in Y_new.columns:
             continue
@@ -1625,16 +1784,13 @@ def perform_evaluation(
         metrics = metric_dict(y_true=y_true, y_pred=y_pred, y_prob=y_prob)
         results[f"{model_name}_{target_name}"] = metrics
 
-        # Save predictions with uncertainty
+        # Save predictions with conformal prediction sets
         model_safe = sanitize_name(model_name)
         target_safe = sanitize_name(target_name)
 
-        # Calculate uncertainty scores
-        from respredai.core.metrics import calculate_uncertainty
+        from respredai.core.metrics import conformal_prediction_sets
 
-        uncertainty_scores, is_uncertain = calculate_uncertainty(
-            y_prob[:, 1], threshold, margin=uncertainty_margin
-        )
+        set_sizes, is_uncertain = conformal_prediction_sets(y_prob, conformal_q_hat)
 
         pred_df = pd.DataFrame(
             {
@@ -1642,7 +1798,7 @@ def perform_evaluation(
                 "y_true": y_true,
                 "y_pred": y_pred,
                 "y_prob": y_prob[:, 1],
-                "uncertainty": uncertainty_scores,
+                "prediction_set_size": set_sizes,
                 "is_uncertain": is_uncertain,
             }
         )

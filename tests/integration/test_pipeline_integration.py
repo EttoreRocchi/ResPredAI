@@ -11,11 +11,17 @@ import pytest
 from respredai.core.workflow import perform_evaluation, perform_pipeline, perform_training
 from respredai.io.config import ConfigHandler, DataSetter
 
-# Suppress expected sklearn warnings for small synthetic test data
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::sklearn.exceptions.ConvergenceWarning",
-    "ignore:.*max_iter was reached.*:UserWarning",
-)
+# Suppress expected warnings for small synthetic test data
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.filterwarnings(
+        "ignore::sklearn.exceptions.ConvergenceWarning",
+        "ignore:.*max_iter was reached.*:UserWarning",
+        "ignore:.*Mean of empty slice.*:RuntimeWarning",
+        "ignore:.*Degrees of freedom <= 0.*:RuntimeWarning",
+        "ignore:.*Bootstrap CI.*:UserWarning",
+    ),
+]
 
 
 def create_synthetic_data(n_samples=100, seed=42):

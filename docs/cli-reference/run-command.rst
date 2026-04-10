@@ -391,20 +391,21 @@ Controls categorical feature encoding.
 [Uncertainty] Section
 ~~~~~~~~~~~~~~~~~~~~~
 
-Controls uncertainty quantification for predictions near the decision threshold.
+Controls conformal prediction for uncertainty quantification with distribution-free coverage guarantees.
 
 .. code-block:: ini
 
     [Uncertainty]
-    margin = 0.1
+    alpha = 0.1
 
 **Parameters:**
 
-- ``margin`` - Margin around the decision threshold for flagging uncertain predictions (default: ``0.1``)
+- ``alpha`` - Miscoverage rate for Mondrian conformal prediction (default: ``0.1``)
 
   - Range: 0 to 0.5 (exclusive)
-  - Predictions with probability within ``margin`` of the threshold are flagged as uncertain
-  - Uncertainty scores (0 = most certain, 1 = most uncertain) are included in evaluation output
+  - Default 0.1 gives 90% target coverage per class
+  - Prediction sets: ``{S}``, ``{R}``, or ``{S, R}`` with finite-sample coverage guarantees
+  - Conformal diagnostics (coverage, fraction uncertain, avg set size) are appended to metrics CSV
 
 [Validation] Section
 ~~~~~~~~~~~~~~~~~~~~
@@ -486,6 +487,9 @@ The pipeline generates the following output structure:
     │   └── Confusion_matrix_{model}_{target}.png     # One PNG per model-target combination
     ├── calibration/                                  # Calibration diagnostics
     │   └── reliability_curve_{model}_{target}.png    # Reliability curves per fold + aggregate
+    ├── subgroup_analysis/                             # Subgroup metrics (if subgroup_columns configured)
+    │   └── {target}/
+    │       └── {model}_{subgroup_col}_subgroup.csv   # Per-subgroup metrics
     ├── report.html                                   # Comprehensive HTML report
     ├── reproducibility.json                          # Reproducibility manifest
     └── respredai.log                                 # Execution log (if verbosity > 0)

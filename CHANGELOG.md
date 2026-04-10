@@ -2,6 +2,30 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.9.0] - 2026-04-10
+
+### Added
+- **FOR (False Omission Rate) metric**: reported in all metrics CSVs and HTML reports
+- **CV+ Conformal Prediction (Mondrian)**:
+  - Per-class prediction sets `{S}`, `{R}`, or `{S, R}` with distribution-free coverage guarantees
+  - Computed per-fold inside nested CV
+  - CV+ formal guarantee: `1 - 2α`; config `[Uncertainty] alpha` replaces `margin`
+  - `q_hat` per class saved in model bundles; HTML report with dedicated section
+- **Model category constants** in `constants.py`:
+  - `SHAP_FALLBACK_MODELS = ("MLP", "RBF_SVC", "KNN", "TabPFN")`
+  - `NO_CLASS_WEIGHT_MODELS = ("MLP", "KNN", "TabPFN")`
+- **Subgroup evaluation documentation**: clear guide on configuring `[Metadata]` section for subgroup analysis
+- **Conformal Prediction section** in HTML report with per-model coverage tables
+
+### Changed
+- Feature importance functions (`has_feature_importance`, `get_feature_importance`, `compute_shap_importance`) now require `model_name` parameter and dispatch on category constants instead of `hasattr` duck-typing
+
+### Removed
+- **Legacy config fallback** for `group_column` in `[Data]` and `temporal_split_column` in `[Validation]` - use `[Metadata]` section (deprecated since v1.8.0)
+- **`calculate_uncertainty()`** function - replaced by `compute_conformal_qhat()` + `conformal_prediction_sets()`
+- **`[Uncertainty] margin`** config key - replaced by `[Uncertainty] alpha`
+- **`uncertainty_margin`** field in model bundles - replaced by `conformal_q_hat` and `conformal_alpha`
+
 ## [1.8.0] - 2026-03-25
 
 ### Added

@@ -198,6 +198,7 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
         "AUROC": roc_auc_score(y_true, y_prob[:, 1]) if len(np.unique(y_true)) > 1 else np.nan,
         "VME": 1 - recall_score(y_true, y_pred, pos_label=1, zero_division=0),
         "ME": 1 - recall_score(y_true, y_pred, pos_label=0, zero_division=0),
+        "FOR": 1 - precision_score(y_true, y_pred, pos_label=0, zero_division=0),
     }
 
     # Add calibration diagnostics (always computed, independent of calibration settings)
@@ -270,6 +271,11 @@ def _me_metric(y_true, y_pred, y_prob):
     return 1 - recall_score(y_true, y_pred, pos_label=0, zero_division=0)
 
 
+def _for_metric(y_true, y_pred, y_prob):
+    """False Omission Rate (FOR) = 1 - Precision(0) = FN / (FN + TN)."""
+    return 1 - precision_score(y_true, y_pred, pos_label=0, zero_division=0)
+
+
 # Metrics that require both classes: map to uninformative baseline values
 # when a bootstrap sample contains only one class. Using baseline values
 # instead of skipping avoids optimistic bias in CIs for imbalanced data.
@@ -290,6 +296,7 @@ METRIC_FUNCTIONS = {
     "AUROC": _auroc_metric,
     "VME": _vme_metric,
     "ME": _me_metric,
+    "FOR": _for_metric,
 }
 
 METRIC_FUNCTIONS.update(CALIBRATION_METRIC_FUNCTIONS)
@@ -475,16 +482,15 @@ def save_metrics_summary(
         ci_lower.append(lower)
         ci_upper.append(upper)
 
-    # Nadeau-Bengio corrected standard error
-    # Accounts for training set overlap in k-fold CV: SE includes a
-    # correction factor (1/k + n_test/n_train) that inflates the variance
-    # to reflect the non-independence of fold estimates.
+    # Nadeau-Bengio corrected standard error with Bouckaert & Frank
+    # variance estimation for repeated CV.
     if n_folds > 0:
         n_test_frac = 1.0 / n_folds
         n_train_frac = 1.0 - n_test_frac
         correction = n_test_frac + (n_test_frac / n_train_frac)
         n_effective = n_repeats if n_repeats > 1 else n_folds
-        se = np.sqrt(correction * (std**2) / n_effective)
+        # Convert ddof=1 variance to ddof=0 (biased) variance
+        se = np.sqrt(correction * (std**2) * (n_effective - 1) / n_effective)
     else:
         se = std  # fallback: no fold info available
 
@@ -506,45 +512,137 @@ def save_metrics_summary(
     return summary_df
 
 
-def calculate_uncertainty(
+def compute_conformal_qhat(
+    y_true: np.ndarray,
     y_prob: np.ndarray,
-    threshold: float,
-    margin: float = 0.1,
-) -> tuple:
-    """
-    Calculate uncertainty scores for predictions.
+    alpha: float = 0.1,
+) -> dict[int, float]:
+    """Compute Mondrian (class-conditional) conformal quantiles from calibration data.
 
-    A prediction is flagged as uncertain if the probability is within
-    `margin` of the decision threshold.
+    Uses nonconformity score ``s(x, y) = 1 - p̂(y | x)`` and computes
+    separate ``q_hat`` per class for class-conditional coverage.
+
+    The quantile is computed as the exact ``k``-th order statistic where
+    ``k = ceil((n + 1) * (1 - alpha))``.  Using an exact order statistic
+    (rather than interpolation) is required for the finite-sample coverage
+    guarantee.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True labels (binary 0/1).
+    y_prob : np.ndarray
+        Predicted probabilities, shape ``(n, 2)``.
+    alpha : float
+        Miscoverage rate (default 0.1 for 90% coverage).
+
+    Returns
+    -------
+    dict[int, float]
+        ``{0: q_hat_0, 1: q_hat_1}`` per-class quantile thresholds.
+    """
+    q_hat: dict[int, float] = {}
+    for cls in (0, 1):
+        mask = y_true == cls
+        if mask.sum() == 0:
+            q_hat[cls] = 1.0  # conservative: include everything
+            continue
+        scores = 1 - y_prob[mask, cls]
+        n = int(mask.sum())
+        # k-th order statistic for the conformal guarantee
+        k = int(np.ceil((n + 1) * (1 - alpha)))
+        if k > n:
+            # Not enough calibration data; include all classes conservatively
+            q_hat[cls] = 1.0
+        else:
+            sorted_scores = np.sort(scores)
+            q_hat[cls] = float(sorted_scores[k - 1])  # k-th smallest (1-indexed)
+    return q_hat
+
+
+def conformal_prediction_sets(
+    y_prob: np.ndarray,
+    q_hat: dict[int, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute conformal prediction sets for each sample.
+
+    A class is included in the prediction set if
+    ``1 - p̂(class | x) <= q_hat[class]``.
 
     Parameters
     ----------
     y_prob : np.ndarray
-        Predicted probabilities for class 1 (Resistant)
-    threshold : float
-        Decision threshold
-    margin : float
-        Margin around threshold for flagging uncertainty (default 0.1)
+        Predicted probabilities, shape ``(n, 2)``.
+    q_hat : dict[int, float]
+        Per-class quantile thresholds from :func:`compute_conformal_qhat`.
 
     Returns
     -------
-    tuple
-        (uncertainty_scores, is_uncertain)
-        - uncertainty_scores: 0 = most certain, 1 = most uncertain (at threshold)
-        - is_uncertain: boolean array, True if within margin of threshold
+    tuple of (set_sizes, is_uncertain)
+        ``set_sizes``: int array - number of classes in prediction set per sample
+        (0 = empty, 1 = certain, 2 = uncertain).
+        ``is_uncertain``: bool array - True if ``set_size != 1``.
     """
-    # Distance from threshold (0 at threshold, up to 0.5 at extremes)
-    distance_from_threshold = np.abs(y_prob - threshold)
+    include_0 = (1 - y_prob[:, 0]) <= q_hat[0]
+    include_1 = (1 - y_prob[:, 1]) <= q_hat[1]
+    set_sizes = include_0.astype(int) + include_1.astype(int)
+    is_uncertain = set_sizes != 1
+    return set_sizes, is_uncertain
 
-    # Normalize to 0-1 scale where 0 = most certain, 1 = most uncertain
-    # Max possible distance is max(threshold, 1-threshold)
-    max_distance = max(threshold, 1 - threshold)
-    certainty_score = distance_from_threshold / max_distance
 
-    # Uncertainty is inverse of certainty
-    uncertainty_scores = 1 - certainty_score
+def conformal_coverage_report(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    q_hat: dict[int, float],
+    alpha: float = 0.1,
+    is_cv_plus: bool = False,
+) -> dict[str, float]:
+    """Compute conformal prediction diagnostics.
 
-    # Flag as uncertain if within margin
-    is_uncertain = distance_from_threshold < margin
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True labels (binary 0/1).
+    y_prob : np.ndarray
+        Predicted probabilities, shape ``(n, 2)``.
+    q_hat : dict[int, float]
+        Per-class quantile thresholds.
+    alpha : float
+        Miscoverage rate (for reference in report).
+    is_cv_plus : bool
+        If True, the q_hat was computed from CV+ (cross-validated)
+        predictions.  The formal CV+ guarantee is ``1 - 2*alpha``,
+        not ``1 - alpha``.
 
-    return uncertainty_scores, is_uncertain
+    Returns
+    -------
+    dict[str, float]
+        Keys: ``empirical_coverage_class_0``, ``empirical_coverage_class_1``,
+        ``empirical_coverage_overall``, ``fraction_uncertain``,
+        ``fraction_empty``, ``avg_set_size``, ``guaranteed_coverage``.
+    """
+    set_sizes, _ = conformal_prediction_sets(y_prob, q_hat)
+
+    # Coverage: true label is in the prediction set
+    include_0 = (1 - y_prob[:, 0]) <= q_hat[0]
+    include_1 = (1 - y_prob[:, 1]) <= q_hat[1]
+    in_set = np.where(y_true == 0, include_0, include_1)
+
+    # CV+: formal guarantee is 1-2α, not 1-α.
+    # Split conformal: formal guarantee is 1-α.
+    guaranteed = 1 - 2 * alpha if is_cv_plus else 1 - alpha
+
+    report: dict[str, float] = {
+        "empirical_coverage_overall": float(in_set.mean()),
+        "guaranteed_coverage": guaranteed,
+        "avg_set_size": float(set_sizes.mean()),
+        "fraction_uncertain": float((set_sizes == 2).mean()),
+        "fraction_empty": float((set_sizes == 0).mean()),
+    }
+    for cls in (0, 1):
+        mask = y_true == cls
+        if mask.sum() > 0:
+            report[f"empirical_coverage_class_{cls}"] = float(in_set[mask].mean())
+        else:
+            report[f"empirical_coverage_class_{cls}"] = float("nan")
+    return report

@@ -66,13 +66,13 @@ predictions CSV Format
 
 .. code-block:: text
 
-    sample_id,y_true,y_pred,y_prob,uncertainty,is_uncertain
-    0,1,1,0.73,0.46,False
-    1,0,0,0.21,0.42,False
-    2,1,0,0.48,0.96,True
+    sample_id,y_true,y_pred,y_prob,prediction_set_size,is_uncertain
+    0,1,1,0.73,1,False
+    1,0,0,0.21,1,False
+    2,1,0,0.48,2,True
 
-- **uncertainty**: Score from 0 (confident) to 1 (uncertain), based on distance from threshold
-- **is_uncertain**: True if prediction probability is within ``margin`` of threshold
+- **prediction_set_size**: Number of classes in the conformal prediction set (0 = empty, 1 = certain, 2 = both classes included)
+- **is_uncertain**: True if prediction set size is not exactly 1 (ambiguous prediction)
 
 metrics CSV Format
 ~~~~~~~~~~~~~~~~~~
@@ -92,9 +92,11 @@ metrics CSV Format
     AUROC,0.71
     VME,0.67
     ME,0.09
+    FOR,0.18
 
 - **VME** (Very Major Error): Rate of false susceptible predictions (predicted 0 when actually 1)
 - **ME** (Major Error): Rate of false resistant predictions (predicted 1 when actually 0)
+- **FOR** (False Omission Rate): Fraction of predicted-susceptible that are actually resistant = FN / (FN + TN)
 
 evaluation_summary.csv
 ~~~~~~~~~~~~~~~~~~~~~~

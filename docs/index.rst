@@ -34,6 +34,7 @@ Features
 - **Calibration Diagnostics**: Brier Score, ECE, MCE metrics with reliability curves
 - **Group-Aware CV**: Prevent data leakage with stratified group k-fold
 - **Feature Importance**: Native importance extraction with SHAP fallback
+- **Conformal Prediction**: CV+ Mondrian conformal with per-class coverage guarantees
 - **Model Persistence**: Save and resume training, cross-dataset validation
 
 Quick Links

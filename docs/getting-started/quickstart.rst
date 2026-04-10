@@ -96,7 +96,7 @@ Configuration Sections
    * - ``[Imputation]``
      - Missing data imputation settings
    * - ``[Uncertainty]``
-     - Uncertainty quantification margin for near-threshold predictions
+     - Conformal prediction miscoverage rate (``alpha``) for uncertainty quantification
    * - ``[Output]``
      - Output directory path
    * - ``[Validation]``

@@ -274,6 +274,7 @@ def _generate_toc(targets: list[str], has_subgroup: bool = False) -> str:
         [
             f'<li><a href="#confusion-matrices">{next_num}. Confusion Matrices</a></li>',
             f'<li><a href="#calibration-diagnostics">{next_num + 1}. Calibration Diagnostics</a></li>',
+            f'<li><a href="#conformal-prediction">{next_num + 2}. Conformal Prediction</a></li>',
         ]
     )
 
@@ -374,6 +375,15 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
     else:
         outer_cv_details = str(outer_folds)
 
+    # Conformal prediction details
+    conformal_alpha = getattr(config_handler.reproducibility_cfg, "conformal_alpha", 0.1)
+    conformal_target = int((1 - conformal_alpha) * 100)
+    conformal_guarantee = int((1 - 2 * conformal_alpha) * 100)
+    conformal_details = (
+        f"&alpha; = {conformal_alpha} "
+        f"({conformal_target}% target, {conformal_guarantee}% CV+ guarantee)"
+    )
+
     return f"""
     <section id="framework-summary">
         <h2>2. Framework Summary</h2>
@@ -385,6 +395,7 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><td>Inner CV Folds</td><td>{_esc(inner_folds)}</td></tr>
             <tr><td>Probability Calibration</td><td>{_esc(prob_calib_details)}</td></tr>
             <tr><td>Threshold Optimization</td><td>{_esc(threshold_details)}</td></tr>
+            <tr><td>Conformal Prediction</td><td>{conformal_details}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{_esc(imputation_details)}</td></tr>
             <tr><td>Confidence Intervals</td><td>{int(getattr(config_handler.pipeline, "confidence_level", 0.95) * 100)}% ({getattr(config_handler.pipeline, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
         </table>
@@ -674,6 +685,83 @@ def _generate_calibration_section(
     return "\n".join(sections)
 
 
+def _generate_conformal_section(
+    metrics_data: dict,
+    models: list[str],
+    targets: list[str],
+    config_handler: Any,
+    section_num: int = 6,
+) -> str:
+    """Generate conformal prediction section with per-model coverage tables."""
+    alpha = getattr(config_handler.reproducibility_cfg, "conformal_alpha", 0.1)
+    guaranteed = 1 - 2 * alpha
+
+    sections = [
+        '<section id="conformal-prediction">',
+        f"<h2>{section_num}. Conformal Prediction</h2>",
+        f"<p>Mondrian (class-conditional) conformal prediction with "
+        f"&alpha; = {alpha}. Each outer CV fold computes a per-class "
+        f"<em>q&#770;</em> threshold from inner out-of-fold predictions and "
+        f"applies it to the held-out test fold. "
+        f"CV+ formal guarantee: {guaranteed:.0%} coverage.</p>",
+    ]
+
+    for model in models:
+        sections.append(f"<h3>{_esc(model)}</h3>")
+
+        table_rows = []
+        for target in targets:
+            key = f"{model}_{target}"
+            if key not in metrics_data:
+                continue
+
+            data = metrics_data[key]
+            cov = _fmt_metric(data, "empirical_coverage")
+            cov_0 = _fmt_metric(data, "empirical_coverage_class_0")
+            cov_1 = _fmt_metric(data, "empirical_coverage_class_1")
+            avg_ss = _fmt_metric(data, "avg_set_size")
+            frac_u = _fmt_metric(data, "fraction_uncertain")
+            frac_e = _fmt_metric(data, "fraction_empty")
+
+            row = f"""
+            <tr>
+                <td>{_esc(target)}</td>
+                <td class="metric-value">{cov}</td>
+                <td class="metric-value">{cov_0}</td>
+                <td class="metric-value">{cov_1}</td>
+                <td class="metric-value">{avg_ss}</td>
+                <td class="metric-value">{frac_u}</td>
+                <td class="metric-value">{frac_e}</td>
+            </tr>
+            """
+            table_rows.append(row)
+
+        if table_rows:
+            sections.append(f"""
+            <table>
+                <thead>
+                    <tr>
+                        <th>Target</th>
+                        <th>Coverage (overall)</th>
+                        <th>Coverage (class 0)</th>
+                        <th>Coverage (class 1)</th>
+                        <th>Avg Set Size</th>
+                        <th>Fraction Uncertain</th>
+                        <th>Fraction Empty</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {"".join(table_rows)}
+                </tbody>
+            </table>
+            """)
+        else:
+            sections.append("<p>No conformal prediction data available.</p>")
+
+    sections.append("</section>")
+    return "\n".join(sections)
+
+
 def _generate_footer() -> str:
     """Generate report footer."""
     return f"""
@@ -838,6 +926,7 @@ def generate_html_report(
         has_subgroup = False
     cm_num = 5 if has_subgroup else 4
     calib_num = cm_num + 1
+    conformal_num = calib_num + 1
 
     # Build HTML
     html_parts = [
@@ -860,6 +949,9 @@ def generate_html_report(
         _generate_confusion_matrices_section(output_path, models, targets, section_num=cm_num),
         _generate_calibration_section(
             output_path, metrics_data, models, targets, section_num=calib_num
+        ),
+        _generate_conformal_section(
+            metrics_data, models, targets, config_handler, section_num=conformal_num
         ),
         _generate_footer(),
         "</body>",

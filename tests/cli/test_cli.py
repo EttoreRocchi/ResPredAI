@@ -151,11 +151,11 @@ class TestCLI:
         assert result.returncode != 0
 
 
+@pytest.mark.slow
 @skip_if_no_cli
 class TestCLIIntegration:
     """Integration tests that run full pipeline commands."""
 
-    @pytest.mark.slow
     def test_full_pipeline_run(self):
         """Test that the full pipeline runs on example config.
 

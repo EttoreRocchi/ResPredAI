@@ -865,8 +865,8 @@ probability_calibration_method = sigmoid
 probability_calibration_cv = 5
 
 # [Uncertainty]
-# Margin around threshold for flagging uncertain predictions (0-0.5)
-# margin = 0.1
+# Miscoverage rate for conformal prediction (default 0.1 = 90% coverage)
+# alpha = 0.1
 
 [Reproducibility]
 seed = 42

@@ -68,8 +68,8 @@ The command creates a file with the following structure:
     n_jobs = -1
 
     # [Uncertainty]
-    # Margin around threshold for flagging uncertain predictions (0-0.5)
-    # margin = 0.1
+    # Miscoverage rate for conformal prediction (default 0.1 = 90% coverage)
+    # alpha = 0.1
 
     [Preprocessing]
     ohe_min_frequency = 0.05
@@ -131,7 +131,55 @@ After generating the template, customize it for your data.
 The ``[Metadata]`` section holds columns that describe sample context but are not used as features:
 
 - **group_column** (optional): Column name for grouping multiple samples from the same patient/subject to prevent data leakage
-- **subgroup_columns** (optional): Comma-separated column names for defining subgroups within groups
+- **subgroup_columns** (optional): Comma-separated column names for defining subgroups for stratified performance evaluation
+- **temporal_column** (optional): Column with dates for temporal (prospective-style) validation
+
+.. _subgroup-config:
+
+Configuring Subgroup Analysis
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Subgroup analysis evaluates model performance separately for each distinct value
+of one or more categorical columns, helping identify disparities across clinical
+subgroups (e.g., ward, specimen type, species).
+
+.. code-block:: ini
+
+    [Metadata]
+    group_column = PatientID
+    subgroup_columns = Ward,Specimen
+
+- Each column listed in ``subgroup_columns`` must exist in the input CSV.
+- Subgroup columns are automatically removed from the feature matrix — they are
+  used for stratified evaluation only, not as predictive features.
+- Multiple columns can be specified (comma-separated); each is analyzed independently.
+
+**What subgroup analysis produces:**
+
+For each model–target–subgroup combination, a CSV is saved under
+``<out_folder>/subgroup_analysis/<target>/<model>_<subgroup_column>_subgroup.csv``
+containing:
+
+- One row per unique subgroup value
+- Columns: ``Subgroup``, ``N`` (sample count), ``Prevalence`` (class 1 rate),
+  plus all standard metrics (Precision, Recall, F1, MCC, AUROC, VME, ME, FOR, etc.)
+- Subgroups with fewer than 10 samples are flagged with a warning
+
+.. code-block:: text
+
+    Subgroup,N,Prevalence,Precision (0),Precision (1),...,AUROC,VME,ME,FOR
+    ICU,142,0.35,0.81,0.62,...,0.78,0.22,0.10,0.15
+    General,310,0.18,0.88,0.45,...,0.72,0.40,0.05,0.08
+    ER,89,0.28,0.79,0.55,...,0.74,0.30,0.12,0.11
+
+.. note::
+
+   ``group_column`` and ``subgroup_columns`` serve different purposes:
+   ``group_column`` controls cross-validation splitting (keeping all samples from
+   the same patient in the same fold to prevent data leakage), while
+   ``subgroup_columns`` only affects post-hoc metric stratification. They can
+   overlap — for instance, group by ``PatientID`` while analyzing performance
+   by ``Ward``.
 
 2. Select Models
 ~~~~~~~~~~~~~~~~
@@ -269,31 +317,30 @@ Use ``respredai list-models`` to see all available models.
 
   - ``bayesian_ridge`` (default) or ``random_forest``
 
-8. Configure Uncertainty Quantification (Optional)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+8. Configure Conformal Prediction (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: ini
 
     [Uncertainty]
-    margin = 0.1
+    alpha = 0.1
 
-- **margin**: Margin around the decision threshold for flagging uncertain predictions (0-0.5)
+- **alpha**: Miscoverage rate for conformal prediction (0-0.5)
 
-  - Predictions with probability within ``margin`` of the threshold are flagged as uncertain
-  - Default: 0.1
-  - Uncertainty scores and flags are included in evaluation output
+  - Default: 0.1 (90% target coverage)
+  - Controls the width of prediction sets: lower alpha → wider sets, higher coverage
 
-- **Uncertainty score computation**:
+- **How it works**: CV+ conformal prediction with Mondrian (class-conditional) coverage
 
-  .. code-block:: text
+  - Nonconformity score: ``s(x, y) = 1 - p̂(y | x)``
+  - Separate ``q_hat`` thresholds per class — critical for AMR class imbalance
+  - A class is included in the prediction set if ``1 - p̂(class | x) <= q_hat[class]``
+  - Prediction sets: ``{S}`` (susceptible only), ``{R}`` (resistant only), or ``{S, R}`` (uncertain)
+  - Finite-sample, distribution-free coverage guarantees per class
+  - CV+ guarantee: ``1 - 2*alpha`` worst-case (typically closer to ``1 - alpha`` in practice)
 
-      distance = |probability - threshold|
-      max_distance = max(threshold, 1 - threshold)
-      uncertainty = 1 - (distance / max_distance)
-      is_uncertain = distance < margin
-
-  - Score ranges from 0 (confident, at probability extremes) to 1 (uncertain, at threshold)
-  - When threshold is calibrated, uncertainty is computed relative to the calibrated threshold
+- **Output**: prediction CSV includes ``prediction_set_size`` (1 = certain, 2 = uncertain) and
+  metrics CSV includes conformal diagnostics (empirical coverage, fraction uncertain, average set size)
 
 9. Configure Preprocessing (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

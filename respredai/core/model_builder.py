@@ -134,9 +134,8 @@ def _create_classifier(
             enable_categorical=True,
             n_jobs=1,
         )
-    # Note: MLP, KNN, and TabPFN do not support native class weight balancing.
-    # They rely on AUROC optimization in GridSearchCV and optional threshold
-    # calibration to handle class imbalance.
+    # Note: models in NO_CLASS_WEIGHT_MODELS do not support native
+    # class weight balancing.
     elif model_name == "MLP":
         return MLPClassifier(
             solver="adam",

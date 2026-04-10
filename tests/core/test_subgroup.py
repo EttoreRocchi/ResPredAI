@@ -77,7 +77,9 @@ class TestComputeSubgroupMetrics:
         y_prob = np.column_stack([1 - y_true * 0.9, y_true * 0.9])
         groups = np.array(["A"] * 5 + ["B"] * 5)
 
-        df = compute_subgroup_metrics(y_true, y_pred, y_prob, groups, "test_col")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = compute_subgroup_metrics(y_true, y_pred, y_prob, groups, "test_col")
 
         a_row = df[df["Subgroup"] == "A"].iloc[0]
         b_row = df[df["Subgroup"] == "B"].iloc[0]

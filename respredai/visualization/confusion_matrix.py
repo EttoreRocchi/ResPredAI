@@ -1,5 +1,6 @@
 """Confusion matrix visualization and saving."""
 
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -55,9 +56,11 @@ def save_cm(
 
         fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
 
-        f1_mean, f1_std = np.nanmean(f1scores[target]), np.nanstd(f1scores[target], ddof=1)
-        mcc_mean, mcc_std = np.nanmean(mccs[target]), np.nanstd(mccs[target], ddof=1)
-        auroc_mean, auroc_std = np.nanmean(aurocs[target]), np.nanstd(aurocs[target], ddof=1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            f1_mean, f1_std = np.nanmean(f1scores[target]), np.nanstd(f1scores[target], ddof=1)
+            mcc_mean, mcc_std = np.nanmean(mccs[target]), np.nanstd(mccs[target], ddof=1)
+            auroc_mean, auroc_std = np.nanmean(aurocs[target]), np.nanstd(aurocs[target], ddof=1)
 
         def _fmt(name: str, mean: float, std: float) -> str:
             if np.isnan(std):

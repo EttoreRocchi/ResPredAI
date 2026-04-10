@@ -2,7 +2,6 @@
 
 import logging
 import os
-import warnings
 from collections.abc import Iterable
 from configparser import ConfigParser
 from dataclasses import dataclass, field
@@ -22,10 +21,6 @@ from respredai.core.constants import (
     THRESHOLD_OBJECTIVES,
     VALIDATION_STRATEGIES,
 )
-
-# ---------------------------------------------------------------------------
-# Domain-specific configuration dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -101,7 +96,7 @@ class ReproducibilityConfig:
     verbosity: int = 1
     log_basename: str = "respredai.log"
     n_jobs: int = -1
-    uncertainty_margin: float = 0.1
+    conformal_alpha: float = 0.1
 
 
 @dataclass
@@ -111,11 +106,6 @@ class MetadataConfig:
     group_column: Optional[str] = None
     temporal_column: Optional[str] = None
     subgroup_columns: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# ConfigHandler
-# ---------------------------------------------------------------------------
 
 
 class ConfigHandler:
@@ -138,10 +128,6 @@ class ConfigHandler:
         self.config_path = config_path
         self.logger: Optional[logging.Logger] = None
         self._setup_config()
-
-    # ------------------------------------------------------------------
-    # Setup & parsing
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _get_optional_str(
@@ -227,7 +213,7 @@ class ConfigHandler:
             verbosity=config.getint("Log", "verbosity"),
             log_basename=config.get("Log", "log_basename"),
             n_jobs=config.getint("Resources", "n_jobs"),
-            uncertainty_margin=config.getfloat("Uncertainty", "margin", fallback=0.1),
+            conformal_alpha=config.getfloat("Uncertainty", "alpha", fallback=0.1),
         )
         self.output = OutputConfig(
             out_folder=config.get("Output", "out_folder"),
@@ -245,25 +231,16 @@ class ConfigHandler:
         )
 
     def _parse_metadata_section(self, config: ConfigParser) -> None:
-        """Parse [Metadata] section, with fallback to legacy locations."""
+        """Parse [Metadata] section."""
         if config.has_section("Metadata"):
             group_col = self._get_optional_str(config, "Metadata", "group_column")
             temporal_col = self._get_optional_str(config, "Metadata", "temporal_column")
             subgroup_raw = config.get("Metadata", "subgroup_columns", fallback="")
             subgroup_cols = [s.strip() for s in subgroup_raw.split(",") if s.strip()]
         else:
-            # Legacy fallback: read from old locations
-            group_col = self._get_optional_str(config, "Data", "group_column")
-            temporal_col = self._get_optional_str(config, "Validation", "temporal_split_column")
+            group_col = None
+            temporal_col = None
             subgroup_cols = []
-            if group_col or temporal_col:
-                warnings.warn(
-                    "group_column in [Data] and temporal_split_column in [Validation] are "
-                    "deprecated. Move them to a [Metadata] section as group_column and "
-                    "temporal_column respectively.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
 
         self.metadata = MetadataConfig(
             group_column=group_col,
@@ -337,10 +314,10 @@ class ConfigHandler:
             )
         if self.pipeline.n_bootstrap < 100:
             raise ValueError(f"n_bootstrap must be >= 100, got {self.pipeline.n_bootstrap}")
-        if not 0 < self.reproducibility_cfg.uncertainty_margin < 0.5:
+        if not 0 < self.reproducibility_cfg.conformal_alpha < 0.5:
             raise ValueError(
-                f"Uncertainty margin must be between 0 and 0.5, "
-                f"got {self.reproducibility_cfg.uncertainty_margin}"
+                f"[Uncertainty] alpha must be between 0 and 0.5, "
+                f"got {self.reproducibility_cfg.conformal_alpha}"
             )
 
         # Imputation validation

@@ -3,12 +3,14 @@
 A machine learning pipeline for predicting antimicrobial resistance.
 """
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 __author__ = "Ettore Rocchi"
 __email__ = "ettore.rocchi3@unibo.it"
 
 from respredai.core.metrics import (
-    calculate_uncertainty,
+    compute_conformal_qhat,
+    conformal_coverage_report,
+    conformal_prediction_sets,
     cost_sensitive_score,
     f1_threshold_score,
     f2_threshold_score,
@@ -52,7 +54,9 @@ __all__ = [
     "f2_threshold_score",
     "cost_sensitive_score",
     "get_threshold_scorer",
-    "calculate_uncertainty",
+    "compute_conformal_qhat",
+    "conformal_prediction_sets",
+    "conformal_coverage_report",
     # IO
     "ConfigHandler",
     "DataSetter",

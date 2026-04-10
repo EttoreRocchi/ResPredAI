@@ -52,7 +52,10 @@ def generate_summary_report(output_folder: str, models: list, targets: list) -> 
                 metric_name = sanitize_metric_name(metric_row["Metric"])
                 mean_val = metric_row["Mean"]
                 se_val = metric_row.get("SE", metric_row["Std"])
-                row[metric_name] = f"{mean_val:.3f}±{se_val:.3f}"
+                if pd.notna(se_val):
+                    row[metric_name] = f"{mean_val:.3f}±{se_val:.3f}"
+                else:
+                    row[metric_name] = f"{mean_val:.3f}"
 
             target_rows.append(row)
             all_summaries.append(row)

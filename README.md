@@ -107,8 +107,8 @@ confidence_level = 0.95
 n_bootstrap = 1000
 
 [Uncertainty]
-# Margin around threshold for flagging uncertain predictions (0-0.5)
-margin = 0.1
+# Miscoverage rate for conformal prediction (default 0.1 = 90% coverage)
+alpha = 0.1
 
 [Reproducibility]
 seed = 42
@@ -152,8 +152,6 @@ respredai run --config my_config.ini
 ```
 
 ## Pipeline Overview
-
-> *Amber nodes indicate optional steps controlled by configuration parameters. All pipelines are executed for each model × target combination.*
 
 ### `respredai run` - Nested Cross-Validation
 
@@ -261,6 +259,8 @@ flowchart LR
     style I fill:#0dafb5,stroke:#098a8f,color:#fff
     style J fill:#0dafb5,stroke:#098a8f,color:#fff
 ```
+
+> *Amber nodes indicate optional steps controlled by configuration parameters. All pipelines are executed for each model × target combination.*
 
 ## CLI Commands
 
@@ -407,7 +407,7 @@ output_folder/
 
 > [!IMPORTANT]
 > **Intended use:** ResPredAI is a research software project developed for retrospective data analysis and experimentation with machine learning models for antimicrobial resistance prediction.
-> The software is provided for research and educational purposes only. It is not intended for clinical use or clinical decision-making and should not be used to guide patient care.
+> The software is provided for research and educational purposes only.
 
 
 ## Changelog
