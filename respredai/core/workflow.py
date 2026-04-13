@@ -1619,13 +1619,27 @@ def perform_training(
                     ("classifier", sklearn_clone(best_estimator)),
                 ]
             )
-            inner_cv = StratifiedKFold(
-                n_splits=config_handler.pipeline.inner_folds,
-                shuffle=True,
-                random_state=config_handler.reproducibility_cfg.seed,
-            )
+            if datasetter.groups is not None:
+                inner_cv = StratifiedGroupKFold(
+                    n_splits=config_handler.pipeline.inner_folds,
+                    shuffle=True,
+                    random_state=config_handler.reproducibility_cfg.seed,
+                )
+                conformal_cv_params = {"groups": datasetter.groups}
+            else:
+                inner_cv = StratifiedKFold(
+                    n_splits=config_handler.pipeline.inner_folds,
+                    shuffle=True,
+                    random_state=config_handler.reproducibility_cfg.seed,
+                )
+                conformal_cv_params = {}
             y_prob_oof = cross_val_predict(
-                conformal_pipe, X, y, cv=inner_cv, method="predict_proba"
+                conformal_pipe,
+                X,
+                y,
+                cv=inner_cv,
+                method="predict_proba",
+                **conformal_cv_params,
             )
             conformal_q_hat = compute_conformal_qhat(
                 y.values, y_prob_oof, alpha=config_handler.reproducibility_cfg.conformal_alpha

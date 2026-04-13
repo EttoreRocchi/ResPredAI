@@ -2,6 +2,11 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.9.1] - 2026-04-13
+
+### Fixed
+- **Group leakage in `perform_training` conformal CV**: now uses `StratifiedGroupKFold` when groups are available, matching `perform_pipeline` and `perform_temporal_validation`.
+
 ## [1.9.0] - 2026-04-10
 
 ### Added
