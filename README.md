@@ -52,6 +52,22 @@ cd ResPredAI
 pip install -e ".[dev]"
 ```
 
+### Optional: TabPFN support
+
+TabPFN is shipped as an optional extra to keep the base install lean:
+
+```bash
+pip install "respredai[tabpfn]"
+```
+
+TabPFN v3 also requires a [PriorLabs API token](https://priorlabs.ai/docs). Export it before running any pipeline that includes `TabPFN` in `[Pipeline] models`:
+
+```bash
+export TABPFN_TOKEN="your-token-here"
+```
+
+If `TabPFN` is requested without the extra installed or without the token set, ResPredAI fails at the start of the run.
+
 ## Testing the Installation
 
 Verify the installation:

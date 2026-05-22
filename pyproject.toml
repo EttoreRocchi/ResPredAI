@@ -37,7 +37,7 @@ respredai = "respredai.cli:main"
 [tool.setuptools.dynamic]
 version = {attr = "respredai.__version__"}
 dependencies = {file = ["requirements.txt"]}
-optional-dependencies = {dev = {file = ["dev-requirements.txt"]}, docs = {file = ["docs-requirements.txt"]}}
+optional-dependencies = {dev = {file = ["dev-requirements.txt"]}, docs = {file = ["docs-requirements.txt"]}, tabpfn = {file = ["tabpfn-requirements.txt"]}}
 
 [project.urls]
 "Homepage" = "https://github.com/EttoreRocchi/ResPredAI"

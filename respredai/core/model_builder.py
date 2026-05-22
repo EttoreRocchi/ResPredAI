@@ -1,6 +1,7 @@
 """Pipeline creation for different machine learning models."""
 
 import logging
+import os
 from typing import Literal
 
 import numpy as np
@@ -18,12 +19,43 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from tabpfn import TabPFNClassifier
-from tabpfn.constants import ModelVersion
 from xgboost import XGBClassifier
 
 from respredai.core.constants import AVAILABLE_MODELS
 from respredai.core.params import PARAM_GRID
+
+TABPFN_TOKEN_ENV = "TABPFN_TOKEN"
+
+
+def ensure_tabpfn_available() -> None:
+    """Verify that TabPFN is installed and an API token is configured.
+
+    TabPFN is shipped as an optional extra (``pip install respredai[tabpfn]``)
+    and the v3 model requires a PriorLabs API token, supplied via the
+    ``TABPFN_TOKEN`` environment variable. Call this eagerly before starting
+    any pipeline that includes ``TabPFN`` so the run fails fast on setup
+    issues instead of mid-fold.
+
+    Raises
+    ------
+    ImportError
+        If the ``tabpfn`` package is not installed.
+    RuntimeError
+        If ``TABPFN_TOKEN`` is not set in the environment.
+    """
+    try:
+        import tabpfn  # noqa: F401
+    except ImportError as e:
+        raise ImportError(
+            "TabPFN is not installed. Install with `pip install respredai[tabpfn]` "
+            "to enable the TabPFN model."
+        ) from e
+    if not os.environ.get(TABPFN_TOKEN_ENV):
+        raise RuntimeError(
+            "TabPFN v3 requires a PriorLabs API token. "
+            f"Set the {TABPFN_TOKEN_ENV} environment variable "
+            "(see https://priorlabs.ai/docs)."
+        )
 
 
 class _NaNSafeScaler(BaseEstimator, TransformerMixin):
@@ -160,10 +192,14 @@ def _create_classifier(
             auto_class_weights="Balanced",
         )
     elif model_name == "TabPFN":
+        ensure_tabpfn_available()
+        from tabpfn import TabPFNClassifier
+        from tabpfn.constants import ModelVersion
+
         if not torch.cuda.is_available():
             logging.getLogger("respredai").warning("CUDA not available; TabPFN will use CPU.")
-        return TabPFNClassifier().create_default_for_version(
-            version=ModelVersion.V2,
+        return TabPFNClassifier.create_default_for_version(
+            version=ModelVersion.V3,
             device="cuda" if torch.cuda.is_available() else "cpu",
             n_estimators=8,
             random_state=rnd_state,

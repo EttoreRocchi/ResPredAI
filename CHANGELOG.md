@@ -2,6 +2,16 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.9.2] - 2026-05-22
+
+### Changed
+- **TabPFN is now an optional dependency**. Install with `pip install respredai[tabpfn]` to enable the TabPFN model. The base install no longer pulls `tabpfn`.
+- **TabPFN bumped to `>=8.0.0,<9.0.0`** and switched to the **v3 model** (`ModelVersion.V3`) by default.
+
+### Added
+- **`TABPFN_TOKEN` requirement** for TabPFN v3 (PriorLabs API token). The pipeline validates the token at the start of `perform_pipeline`, `perform_temporal_validation`, and `perform_training` when `TabPFN` is in the requested models, failing if the env var is unset.
+- New `ensure_tabpfn_available()` helper in `respredai.core.model_builder` that checks both the installed package and the token.
+
 ## [1.9.1] - 2026-04-13
 
 ### Fixed

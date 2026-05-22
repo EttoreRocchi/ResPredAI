@@ -35,7 +35,7 @@ from respredai.core.constants import (
 )
 from respredai.core.cv_utils import get_outer_cv, get_temporal_split
 from respredai.core.metrics import metric_dict, save_metrics_summary
-from respredai.core.model_builder import get_pipeline
+from respredai.core.model_builder import ensure_tabpfn_available, get_pipeline
 from respredai.core.models import generate_summary_report, get_model_path, load_models, save_models
 from respredai.io.config import ConfigHandler, DataSetter
 from respredai.visualization.confusion_matrix import save_cm
@@ -586,6 +586,9 @@ def perform_pipeline(
     progress_callback : TrainingProgressCallback, optional
         Callback object for progress updates.
     """
+    if "TabPFN" in models:
+        ensure_tabpfn_available()
+
     X, Y = datasetter.X, datasetter.Y
     if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info(f"Data dimension: {X.shape}")
@@ -1196,6 +1199,9 @@ def perform_temporal_validation(
     progress_callback : optional
         Callback object for progress updates.
     """
+    if "TabPFN" in models:
+        ensure_tabpfn_available()
+
     X, Y = datasetter.X, datasetter.Y
 
     # Get temporal split indices
@@ -1505,6 +1511,9 @@ def perform_training(
     progress_callback : optional
         Callback for progress updates (SimpleTrainingProgressCallback).
     """
+    if "TabPFN" in models:
+        ensure_tabpfn_available()
+
     X = datasetter.X
     Y = datasetter.Y
 
