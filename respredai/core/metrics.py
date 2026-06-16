@@ -19,6 +19,8 @@ from sklearn.metrics import (
 from respredai.core.calibration import (
     CALIBRATION_METRIC_FUNCTIONS,
     calibration_metrics_dict,
+    expected_calibration_error,
+    maximum_calibration_error,
 )
 
 
@@ -166,7 +168,9 @@ def get_threshold_scorer(
         raise ValueError(f"Unknown threshold objective: {objective}")
 
 
-def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> dict:
+def metric_dict(
+    y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray, n_bins: int = 10
+) -> dict:
     """
     Calculate comprehensive classification metrics including calibration diagnostics.
 
@@ -178,6 +182,8 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
         Predicted labels
     y_prob : np.ndarray
         Predicted probabilities (2D array)
+    n_bins : int, default=10
+        Number of bins for the ECE/MCE point estimates.
 
     Returns
     -------
@@ -202,7 +208,7 @@ def metric_dict(y_true: np.ndarray, y_pred: np.ndarray, y_prob: np.ndarray) -> d
     }
 
     # Add calibration diagnostics (always computed, independent of calibration settings)
-    calibration_metrics = calibration_metrics_dict(y_true, y_prob[:, 1])
+    calibration_metrics = calibration_metrics_dict(y_true, y_prob[:, 1], n_bins=n_bins)
     metrics.update(calibration_metrics)
 
     return metrics
@@ -300,6 +306,24 @@ METRIC_FUNCTIONS = {
 }
 
 METRIC_FUNCTIONS.update(CALIBRATION_METRIC_FUNCTIONS)
+
+
+def _ci_metric_fn(col: str, n_bins: int):
+    """Return the bootstrap metric function for a metric column.
+
+    For the bin-dependent calibration metrics (ECE, MCE) this binds ``n_bins`` so
+    the confidence interval uses the same bin count as the reported point
+    estimate. All other metrics use the standard fixed functions.
+    """
+    if col == "ECE":
+        return lambda y_true, y_pred, y_prob: expected_calibration_error(
+            y_true, y_prob[:, 1], n_bins=n_bins
+        )
+    if col == "MCE":
+        return lambda y_true, y_pred, y_prob: maximum_calibration_error(
+            y_true, y_prob[:, 1], n_bins=n_bins
+        )
+    return METRIC_FUNCTIONS[col]
 
 
 def bootstrap_ci_samples(
@@ -411,6 +435,7 @@ def save_metrics_summary(
     y_prob_all: np.ndarray,
     n_folds: int = 0,
     n_repeats: int = 1,
+    n_bins: int = 10,
 ):
     """
     Save metrics summary with mean, std, and bootstrap confidence intervals.
@@ -441,6 +466,9 @@ def save_metrics_summary(
         Number of CV repeats. When > 1, std is computed across repeat-level
         means rather than across all individual folds, following Bouckaert &
         Frank (2004) for repeated CV variance estimation.
+    n_bins : int, default=10
+        Number of bins for the ECE/MCE confidence intervals; matches the bin
+        count used for the corresponding point estimates.
     """
     df_metrics = pd.DataFrame(metrics_dict)
     mean = df_metrics.mean()
@@ -472,7 +500,7 @@ def save_metrics_summary(
                 y_true=y_true_all,
                 y_pred=y_pred_all,
                 y_prob=y_prob_all,
-                metric_fn=METRIC_FUNCTIONS[col],
+                metric_fn=_ci_metric_fn(col, n_bins),
                 confidence=confidence,
                 n_bootstrap=n_bootstrap,
                 random_state=random_state,

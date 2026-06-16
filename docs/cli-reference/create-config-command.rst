@@ -54,6 +54,7 @@ The command creates a file with the following structure:
     probability_calibration_cv = 5
     # confidence_level = 0.95
     # n_bootstrap = 1000
+    calibration_bins = 10
 
     [Reproducibility]
     seed = 42
@@ -150,13 +151,13 @@ subgroups (e.g., ward, specimen type, species).
     subgroup_columns = Ward,Specimen
 
 - Each column listed in ``subgroup_columns`` must exist in the input CSV.
-- Subgroup columns are automatically removed from the feature matrix — they are
+- Subgroup columns are automatically removed from the feature matrix - they are
   used for stratified evaluation only, not as predictive features.
 - Multiple columns can be specified (comma-separated); each is analyzed independently.
 
 **What subgroup analysis produces:**
 
-For each model–target–subgroup combination, a CSV is saved under
+For each model-target-subgroup combination, a CSV is saved under
 ``<out_folder>/subgroup_analysis/<target>/<model>_<subgroup_column>_subgroup.csv``
 containing:
 
@@ -178,7 +179,7 @@ containing:
    ``group_column`` controls cross-validation splitting (keeping all samples from
    the same patient in the same fold to prevent data leakage), while
    ``subgroup_columns`` only affects post-hoc metric stratification. They can
-   overlap — for instance, group by ``PatientID`` while analyzing performance
+   overlap - for instance, group by ``PatientID`` while analyzing performance
    by ``Ward``.
 
 2. Select Models
@@ -287,6 +288,10 @@ Use ``respredai list-models`` to see all available models.
 
   - Must be at least 100
 
+- **calibration_bins**: Number of bins for the ECE/MCE calibration metrics (default: 10)
+
+  - Must be at least 2
+
 **Note**: Calibration diagnostics (Brier Score, ECE, MCE, reliability curves) are always computed regardless of this setting.
 
 7. Configure Imputation (Optional)
@@ -333,7 +338,7 @@ Use ``respredai list-models`` to see all available models.
 - **How it works**: CV+ conformal prediction with Mondrian (class-conditional) coverage
 
   - Nonconformity score: ``s(x, y) = 1 - p̂(y | x)``
-  - Separate ``q_hat`` thresholds per class — critical for AMR class imbalance
+  - Separate ``q_hat`` thresholds per class - critical for AMR class imbalance
   - A class is included in the prediction set if ``1 - p̂(class | x) <= q_hat[class]``
   - Prediction sets: ``{S}`` (susceptible only), ``{R}`` (resistant only), or ``{S, R}`` (uncertain)
   - Finite-sample, distribution-free coverage guarantees per class

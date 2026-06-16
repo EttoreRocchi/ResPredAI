@@ -2,6 +2,25 @@
 
 All changes to ResPredAI are documented in this file.
 
+## [1.9.3] - 2026-06-16
+
+### Fixed
+- **Empty results with the default config**: `respredai run` with `calibrate_threshold = false` (the `create-config` default) raised an `UnboundLocalError` per fold that was swallowed by a broad `except`, producing empty/NaN metrics while reporting success.
+- **Silent fold/target failures**: per-fold errors are now warned and counted, and a model/target whose folds all fail raises a clear `RuntimeError` instead of writing NaN-as-success.
+- **RandomForest feature direction**: `feature-importance --direction` silently returned nothing for RandomForest because the 3-D SHAP TreeExplainer output was not correctly handled. SHAP output of any shape (list, 2-D, 3-D) is now reduced to the positive class.
+- **Calibration bin collapse**: quantile bin edges are deduplicated so tied probabilities no longer silently collapse ECE/MCE/reliability bins.
+- **Probability calibration with groups**: `calibrate_probabilities = true` with a `group_column` made every fold fail ("indices are out-of-bounds") because the group-aware CV split list was reused on inner subsets in the conformal step. Split lists are now reset to an integer fold count before refitting.
+
+### Added
+- **Input validation**: targets must be binary 0/1 with both classes present, declared `continuous_features` must exist in the data, and group/temporal columns must not contain missing values. `respredai evaluate` now uses the same reader/validator as training.
+- **`[Pipeline] calibration_bins`** option (default 10) to set the number of bins for the ECE/MCE metrics (both the point estimates and their bootstrap confidence intervals).
+- **Importance provenance**: feature-importance CSVs now include `Importance_Type` (gain, impurity, coefficient, mean_abs_shap - not comparable across model families) and `N_folds_present`. A `Neutral (~0)` direction label is reported for features with no *clear* direction.
+- **Reproducibility**: the manifest now records `n_jobs`, the git commit, and the full installed-package versions. For exact reproduction, recreate the environment from those recorded versions.
+- **CI**: a dedicated job now runs the slow (integration) test suite.
+
+### Changed
+- Cross-fold feature-importance aggregation now skips folds where a feature is absent (NaN-skip) instead of filling zeros, so rare one-hot categories are not diluted toward zero.
+
 ## [1.9.2] - 2026-05-22
 
 ### Changed

@@ -64,8 +64,8 @@ Optional
   - Linear models: uses coefficient sign directly (no extra computation)
   - Tree-based models (RF, XGB, CatBoost): uses TreeExplainer for signed SHAP values
   - Other models: falls back to KernelExplainer for signed SHAP values
-  - Adds a ``Direction`` column to the CSV output (``Risk (+)`` or ``Protective (-)``)
-  - Colors plot bars by direction: firebrick (risk) / seagreen (protective)
+  - Adds a ``Direction`` column to the CSV output (``Risk (+)``, ``Protective (-)``, or ``Neutral (~0)``)
+  - Colors plot bars by direction: firebrick (risk) / seagreen (protective) / gray (neutral)
 
 Supported Models
 ----------------
@@ -117,6 +117,12 @@ The command generates files in the following structure:
             └── {model}_feature_importance_shap.png
 
 Files have ``_shap`` suffix when SHAP is used instead of native importance.
+
+All importance CSVs also include an ``Importance_Type`` column (the importance
+scale, e.g. ``gain``, ``impurity (MDI)``, ``coefficient``, or ``mean_abs_shap`` -
+not comparable across model families) and an ``N_folds_present`` column (the
+number of CV folds in which the feature appeared). Cross-fold means skip folds
+where a feature was absent rather than treating it as zero importance.
 
 CSV File Format (Native)
 ~~~~~~~~~~~~~~~~~~~~~~~~

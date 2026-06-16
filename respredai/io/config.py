@@ -12,6 +12,7 @@ import pandas as pd
 
 from respredai.core.constants import (
     CALIBRATION_METHODS,
+    DEFAULT_CALIBRATION_BINS,
     DEFAULT_CONFIDENCE_LEVEL,
     DEFAULT_N_BOOTSTRAP,
     IMPUTATION_ESTIMATORS,
@@ -50,6 +51,7 @@ class PipelineConfig:
     probability_calibration_cv: int = 5
     confidence_level: float = DEFAULT_CONFIDENCE_LEVEL
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP
+    calibration_bins: int = DEFAULT_CALIBRATION_BINS
     compute_feature_direction: bool = False
 
 
@@ -201,6 +203,9 @@ class ConfigHandler:
                 "Pipeline", "confidence_level", fallback=DEFAULT_CONFIDENCE_LEVEL
             ),
             n_bootstrap=config.getint("Pipeline", "n_bootstrap", fallback=DEFAULT_N_BOOTSTRAP),
+            calibration_bins=config.getint(
+                "Pipeline", "calibration_bins", fallback=DEFAULT_CALIBRATION_BINS
+            ),
             compute_feature_direction=config.getboolean(
                 "Pipeline", "compute_feature_direction", fallback=False
             ),
@@ -314,6 +319,8 @@ class ConfigHandler:
             )
         if self.pipeline.n_bootstrap < 100:
             raise ValueError(f"n_bootstrap must be >= 100, got {self.pipeline.n_bootstrap}")
+        if self.pipeline.calibration_bins < 2:
+            raise ValueError(f"calibration_bins must be >= 2, got {self.pipeline.calibration_bins}")
         if not 0 < self.reproducibility_cfg.conformal_alpha < 0.5:
             raise ValueError(
                 f"[Uncertainty] alpha must be between 0 and 0.5, "
@@ -450,7 +457,10 @@ class DataSetter:
         """
         self.data = self._read_data(config_handler.data_cfg.data_path)
         self._validate_data(
-            self.data, config_handler.data_cfg.targets, config_handler.imputation.method
+            self.data,
+            config_handler.data_cfg.targets,
+            config_handler.imputation.method,
+            continuous_features=config_handler.data_cfg.continuous_features,
         )
 
         # Columns to drop from X (targets + metadata columns)
@@ -464,7 +474,13 @@ class DataSetter:
                     f"Group column '{config_handler.metadata.group_column}' not found in data. "
                     f"Available columns: {list(self.data.columns)}"
                 )
-            self.groups = self.data[config_handler.metadata.group_column].values
+            group_series = self.data[config_handler.metadata.group_column]
+            if group_series.isnull().any():
+                raise ValueError(
+                    f"Group column '{config_handler.metadata.group_column}' contains "
+                    f"missing values; every sample must belong to a group."
+                )
+            self.groups = group_series.values
             cols_to_drop.append(config_handler.metadata.group_column)
 
         # Extract temporal column if specified
@@ -483,6 +499,11 @@ class DataSetter:
                 raise ValueError(
                     f"Could not parse temporal column "
                     f"'{config_handler.metadata.temporal_column}' as dates: {e}"
+                )
+            if self.temporal_column_values.isnull().any():
+                raise ValueError(
+                    f"Temporal column '{config_handler.metadata.temporal_column}' contains "
+                    f"missing or unparseable dates."
                 )
             cols_to_drop.append(config_handler.metadata.temporal_column)
 
@@ -521,8 +542,47 @@ class DataSetter:
         return pd.read_csv(data_path, sep=",", comment="#")
 
     @staticmethod
+    def _validate_binary_targets(
+        data: pd.DataFrame, targets: Iterable, require_both_classes: bool = True
+    ) -> None:
+        """Validate that each target is binary {0, 1} (and optionally has both classes).
+
+        The whole package assumes binary targets encoded as 0/1 (``pos_label=1``,
+        ``labels=[0, 1]``). A non-binary or NaN-containing target would otherwise
+        silently produce wrong or NaN metrics, so fail loudly.
+
+        Parameters
+        ----------
+        require_both_classes : bool, default True
+            When True (training), a single-class target is an error - you cannot
+            train on one class. When False (evaluation on a new cohort), a
+            single-class ground truth is allowed: per-class metrics remain
+            computable and AUROC is reported as NaN.
+        """
+        for t in targets:
+            col = data[t]
+            if col.isnull().any():
+                raise ValueError(
+                    f"Target column '{t}' contains missing values; targets must be complete."
+                )
+            uniq = set(pd.unique(col))
+            if not uniq.issubset({0, 1}):
+                raise ValueError(
+                    f"Target column '{t}' must be binary with values in {{0, 1}}, "
+                    f"found {sorted(uniq, key=str)}. Encode targets as 0/1 before running."
+                )
+            if require_both_classes and len(uniq) < 2:
+                raise ValueError(
+                    f"Target column '{t}' has only one class present ({uniq}); "
+                    f"both 0 and 1 are required."
+                )
+
+    @staticmethod
     def _validate_data(
-        data: pd.DataFrame, targets: Iterable, imputation_method: str = "none"
+        data: pd.DataFrame,
+        targets: Iterable,
+        imputation_method: str = "none",
+        continuous_features: Optional[Iterable] = None,
     ) -> None:
         """
         Validate the loaded data.
@@ -535,20 +595,35 @@ class DataSetter:
             Target column names
         imputation_method : str
             Imputation method from config (none, simple, knn, iterative)
+        continuous_features : Iterable, optional
+            Declared continuous feature names; validated to exist in the data.
 
         Raises
         ------
         ValueError
             If validation fails
         """
-        # Check no missing values (only if imputation is disabled)
+        # Check targets in data
+        if not set(targets).issubset(data.columns):
+            missing = set(targets) - set(data.columns)
+            raise ValueError(f"Target columns not found in dataset: {missing}")
+
+        # Check continuous_features exist. A typo would otherwise be silently
+        # treated as a categorical column and one-hot encoded instead of scaled.
+        if continuous_features is not None:
+            missing_cont = set(continuous_features) - set(data.columns)
+            if missing_cont:
+                raise ValueError(
+                    f"continuous_features not found in dataset: {sorted(missing_cont)}. "
+                    f"Check for typos in [Data] continuous_features."
+                )
+
+        # Targets must be binary 0/1 with both classes and no missing values
+        DataSetter._validate_binary_targets(data, targets)
+
+        # Check no missing values in features (only if imputation is disabled)
         if imputation_method == "none" and data.isnull().values.any():
             raise ValueError(
                 "Dataset contains missing values. "
                 "Enable imputation in config or remove missing values."
             )
-
-        # Check targets in data
-        if not set(targets).issubset(data.columns):
-            missing = set(targets) - set(data.columns)
-            raise ValueError(f"Target columns not found in dataset: {missing}")

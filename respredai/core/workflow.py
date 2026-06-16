@@ -357,6 +357,7 @@ def _compute_ci_metrics_for_target(
         y_prob_all=y_prob_ci,
         n_folds=config_handler.pipeline.outer_folds,
         n_repeats=config_handler.pipeline.outer_cv_repeats,
+        n_bins=config_handler.pipeline.calibration_bins,
     )
 
     return unique_idx, y_true_ci, y_pred_ci, y_prob_ci
@@ -570,6 +571,41 @@ def _make_nan_metrics() -> dict:
     }
 
 
+def _conformal_safe_clone(estimator, calib_cv_folds):
+    """Clone an estimator for conformal cross_val_predict, neutralizing precomputed CV splits.
+
+    Group-aware probability calibration stores its CV as an explicit list of
+    ``(train, test)`` index arrays valid only for the exact data it was built on.
+    The conformal step refits the estimator on cross-validation subsets, where
+    those indices are out of range ("indices are out-of-bounds"). This resets any
+    list-valued ``cv`` - including a calibrator nested inside a threshold-tuning
+    wrapper - to an integer fold count so the clone can be refit on any subset.
+
+    Parameters
+    ----------
+    estimator : sklearn estimator
+        The (possibly wrapped/calibrated) classifier to clone.
+    calib_cv_folds : int
+        Integer fold count to substitute for any list-valued ``cv``.
+
+    Returns
+    -------
+    sklearn estimator
+        An unfitted clone safe to refit on cross-validation subsets.
+    """
+    from sklearn.base import clone as sklearn_clone
+
+    cloned = sklearn_clone(estimator)
+    node = cloned
+    for _ in range(5):  # walk wrappers: TunedThresholdClassifierCV -> CalibratedClassifierCV -> ...
+        if node is None:
+            break
+        if isinstance(getattr(node, "cv", None), list):
+            node.cv = calib_cv_folds
+        node = getattr(node, "estimator", None)
+    return cloned
+
+
 def perform_pipeline(
     datasetter: DataSetter, models: list[str], config_handler: ConfigHandler, progress_callback=None
 ):
@@ -614,6 +650,9 @@ def perform_pipeline(
     if progress_callback:
         total_work = len(models) * len(Y.columns) * total_outer_iterations
         progress_callback.start(total_work=total_work)
+
+    # Track model/target combinations where every fold failed (hard failures).
+    failed_targets: list[str] = []
 
     for model in models:
         if config_handler.reproducibility_cfg.verbosity:
@@ -845,6 +884,7 @@ def perform_pipeline(
                     else:
                         best_classifier = best_estimator
                         best_threshold = DEFAULT_THRESHOLD
+                        threshold_method = "oof"  # placeholder, unused when not calibrating
 
                     # Step 4: Predict on test set using calibrated threshold
                     y_pred, y_prob = _predict_with_threshold(
@@ -869,7 +909,13 @@ def perform_pipeline(
                     conformal_pipe = SkPipeline(
                         [
                             ("scaler", sklearn_clone(fold_transformer)),
-                            ("classifier", sklearn_clone(best_classifier)),
+                            (
+                                "classifier",
+                                _conformal_safe_clone(
+                                    best_classifier,
+                                    config_handler.pipeline.probability_calibration_cv,
+                                ),
+                            ),
                         ]
                     )
                     if datasetter.groups is not None:
@@ -904,7 +950,12 @@ def perform_pipeline(
                     fold_in_set = np.where(y_test.values == 0, include_0, include_1)
 
                     # Calculate comprehensive metrics
-                    fold_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
+                    fold_metrics = metric_dict(
+                        y_true=y_test.values,
+                        y_pred=y_pred,
+                        y_prob=y_prob,
+                        n_bins=config_handler.pipeline.calibration_bins,
+                    )
 
                     # Add per-fold conformal metrics (get mean/std/SE via save_metrics_summary)
                     fold_metrics["empirical_coverage"] = float(fold_in_set.mean())
@@ -958,6 +1009,10 @@ def perform_pipeline(
                         progress_callback.complete_fold(i + 1, fold_metrics)
 
                 except Exception as e:
+                    warnings.warn(
+                        f"Fold {i + 1} failed for {model} / {target}: {e}",
+                        stacklevel=2,
+                    )
                     if config_handler.reproducibility_cfg.verbosity:
                         config_handler.logger.error(
                             f"Error in iteration {i + 1} for target {target}: {str(e)}"
@@ -1010,6 +1065,17 @@ def perform_pipeline(
                         config_handler.logger.info(
                             f"Saved models after fold {i + 1} for {model} - {target}"
                         )
+
+            # Surface a fully-failed target: if no fold produced a valid result,
+            # this is a hard failure, not a NaN-as-success.
+            if all_metrics[target] and not any(
+                not np.isnan(m.get("F1 (weighted)", np.nan)) for m in all_metrics[target]
+            ):
+                fail_msg = f"All folds failed for {model} / {target}; no valid metrics produced."
+                warnings.warn(fail_msg, stacklevel=2)
+                if config_handler.reproducibility_cfg.verbosity:
+                    config_handler.logger.error(fail_msg)
+                failed_targets.append(f"{model}/{target}")
 
             if config_handler.reproducibility_cfg.verbosity:
                 config_handler.logger.info(
@@ -1172,6 +1238,13 @@ def perform_pipeline(
     if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("Analysis completed.")
 
+    if failed_targets:
+        raise RuntimeError(
+            "Training failed for: "
+            + ", ".join(failed_targets)
+            + " (all folds errored). See the warnings and the log for details."
+        )
+
 
 def perform_temporal_validation(
     datasetter: DataSetter,
@@ -1324,7 +1397,12 @@ def perform_temporal_validation(
                 )
 
                 # Calculate metrics
-                temporal_metrics = metric_dict(y_true=y_test.values, y_pred=y_pred, y_prob=y_prob)
+                temporal_metrics = metric_dict(
+                    y_true=y_test.values,
+                    y_pred=y_pred,
+                    y_prob=y_prob,
+                    n_bins=config_handler.pipeline.calibration_bins,
+                )
 
                 # Save metrics
                 model_safe = sanitize_name(model_name)
@@ -1345,6 +1423,7 @@ def perform_temporal_validation(
                     y_true_all=y_test.values,
                     y_pred_all=y_pred,
                     y_prob_all=y_prob,
+                    n_bins=config_handler.pipeline.calibration_bins,
                 )
 
                 # Conformal prediction diagnostics for temporal validation
@@ -1363,7 +1442,13 @@ def perform_temporal_validation(
                 conformal_pipe = SkPipeline(
                     [
                         ("scaler", sklearn_clone(transformer)),
-                        ("classifier", sklearn_clone(best_estimator)),
+                        (
+                            "classifier",
+                            _conformal_safe_clone(
+                                best_estimator,
+                                config_handler.pipeline.probability_calibration_cv,
+                            ),
+                        ),
                     ]
                 )
                 if datasetter.groups is not None:
@@ -1740,8 +1825,8 @@ def perform_evaluation(
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
 
-    # Load new data
-    new_data = pd.read_csv(data_path)
+    # Load new data using the same parser as training (consistent CSV handling)
+    new_data = DataSetter._read_data(str(data_path))
 
     # Validate columns
     required_features = metadata["features"]
@@ -1754,6 +1839,11 @@ def perform_evaluation(
     missing_targets = set(required_targets) - set(new_data.columns)
     if missing_targets:
         raise ValueError(f"Missing target columns (ground truth required): {missing_targets}")
+
+    # Validate targets are binary 0/1 and complete. Unlike training, a new-cohort
+    # ground-truth column may legitimately contain a single class (e.g. a rare
+    # resistance), so do not require both classes here.
+    DataSetter._validate_binary_targets(new_data, required_targets, require_both_classes=False)
 
     # Extract features and targets
     X_new = new_data[required_features].copy()

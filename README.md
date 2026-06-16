@@ -121,6 +121,8 @@ me_cost = 1.0
 confidence_level = 0.95
 # Number of bootstrap resamples for CIs (>= 100, default: 1000)
 n_bootstrap = 1000
+# Number of bins for ECE/MCE calibration metrics (>= 2, default: 10)
+calibration_bins = 10
 
 [Uncertainty]
 # Miscoverage rate for conformal prediction (default 0.1 = 90% coverage)
@@ -424,6 +426,12 @@ output_folder/
 > [!IMPORTANT]
 > **Intended use:** ResPredAI is a research software project developed for retrospective data analysis and experimentation with machine learning models for antimicrobial resistance prediction.
 > The software is provided for research and educational purposes only.
+
+> [!NOTE]
+> **Input validation:** ResPredAI fails fast on common data problems. Targets must be binary (encoded as 0/1) with both classes present, declared `continuous_features` must exist in the data, and group/temporal columns must not contain missing values.
+
+> [!NOTE]
+> **Reproducibility:** A `reproducibility.json` manifest (full dependency versions, seed, `n_jobs`, git commit, and a data hash) is written with every run. For bit-for-bit reproduction, recreate the environment from the recorded package versions and set `n_jobs = 1`, since parallel reductions and BLAS threading can perturb low-order floating-point bits.
 
 
 ## Changelog

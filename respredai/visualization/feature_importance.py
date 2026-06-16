@@ -103,6 +103,44 @@ def get_feature_importance(model, feature_names: list[str], model_name: str) -> 
     return pd.Series(importances, index=feature_names)
 
 
+def _shap_to_class1(shap_values) -> np.ndarray:
+    """Reduce SHAP output to a 2D (n_samples, n_features) array for the positive class.
+
+    SHAP returns different shapes across versions/explainers:
+    - a list ``[class0, class1]`` (older multiclass API),
+    - a 3D array ``(n_samples, n_features, n_classes)`` (newer SHAP TreeExplainer),
+    - a 2D array ``(n_samples, n_features)`` (scalar-output explainers).
+
+    For binary classification we always want the positive class (index 1).
+    """
+    if isinstance(shap_values, list):
+        arr = np.asarray(shap_values[1] if len(shap_values) > 1 else shap_values[0])
+    else:
+        arr = np.asarray(shap_values)
+    if arr.ndim == 3:
+        idx = 1 if arr.shape[2] > 1 else 0
+        arr = arr[:, :, idx]
+    return arr
+
+
+def _importance_type_label(model_name: Optional[str], method: str) -> str:
+    """Human-readable label for the importance scale.
+
+    These scales are NOT comparable across model families (e.g. tree impurity
+    vs gradient gain vs linear coefficient vs mean |SHAP|).
+    """
+    if method == "shap":
+        return "mean_abs_shap"
+    labels = {
+        "RF": "impurity (MDI)",
+        "XGB": "gain",
+        "CatBoost": "prediction_values_change",
+        "LR": "coefficient",
+        "Linear_SVC": "coefficient",
+    }
+    return labels.get(model_name or "", "native")
+
+
 def compute_shap_importance(
     model,
     X_test: np.ndarray,
@@ -147,9 +185,7 @@ def compute_shap_importance(
         # Tree-based models: use TreeExplainer (fast, exact)
         if model_name in TREE_BASED_MODELS:
             explainer = shap.TreeExplainer(inner_model)
-            shap_values = explainer.shap_values(X_df)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[1]  # class 1 (resistant)
+            shap_values = _shap_to_class1(explainer.shap_values(X_df))
             mean_abs_shap = np.abs(shap_values).mean(axis=0)
             return pd.Series(mean_abs_shap, index=feature_names)
 
@@ -164,7 +200,7 @@ def compute_shap_importance(
             return model.predict_proba(x_df)[:, 1]
 
         explainer = shap.KernelExplainer(predict_fn, background)
-        shap_values = explainer.shap_values(X_df)
+        shap_values = _shap_to_class1(explainer.shap_values(X_df))
 
         mean_abs_shap = np.abs(shap_values).mean(axis=0)
         return pd.Series(mean_abs_shap, index=feature_names)
@@ -254,12 +290,8 @@ def compute_feature_direction(
         if model_name in TREE_BASED_MODELS:
             try:
                 explainer = shap.TreeExplainer(inner_model)
-                shap_values = explainer.shap_values(X_df)
-                if isinstance(shap_values, list):
-                    shap_values = shap_values[1]  # class 1 (resistant)
-                return _shap_direction_from_correlation(
-                    np.asarray(shap_values), X_arr, feature_names
-                )
+                shap_values = _shap_to_class1(explainer.shap_values(X_df))
+                return _shap_direction_from_correlation(shap_values, X_arr, feature_names)
             except Exception:
                 pass  # Fall through to KernelExplainer
 
@@ -274,8 +306,8 @@ def compute_feature_direction(
             return model.predict_proba(x_df)[:, 1]
 
         explainer = shap.KernelExplainer(predict_fn, background)
-        shap_values = explainer.shap_values(X_df)
-        return _shap_direction_from_correlation(np.asarray(shap_values), X_arr, feature_names)
+        shap_values = _shap_to_class1(explainer.shap_values(X_df))
+        return _shap_direction_from_correlation(shap_values, X_arr, feature_names)
 
     except Exception as e:
         warnings.warn(f"Feature direction computation failed: {str(e)}")
@@ -385,10 +417,18 @@ def _compute_directions_from_folds(
     if not direction_list:
         return None
 
-    mean_signed = pd.DataFrame(direction_list).fillna(0).mean(axis=0)
-    # Align to requested feature_names
-    mean_signed = mean_signed.reindex(feature_names, fill_value=0)
-    return mean_signed.apply(lambda v: "Risk (+)" if v >= 0 else "Protective (-)")
+    # NaN-skip across folds: average direction only over folds where the feature
+    # was present, then align to the requested feature order.
+    mean_signed = pd.DataFrame(direction_list).mean(axis=0)
+    mean_signed = mean_signed.reindex(feature_names)
+    eps = 1e-9
+
+    def _label(v):
+        if pd.isna(v) or abs(v) <= eps:
+            return "Neutral (~0)"
+        return "Risk (+)" if v > 0 else "Protective (-)"
+
+    return mean_signed.apply(_label)
 
 
 def extract_feature_importance_from_models(
@@ -484,8 +524,9 @@ def extract_feature_importance_from_models(
 
         if importances_list:
             importances_df = pd.DataFrame(importances_list)
-            # fillna(0): features absent in a fold contribute zero importance
-            mean_importance = importances_df.fillna(0).mean(axis=0)
+            # NaN-skip: average only over folds where the feature is present, so
+            # rare one-hot categories that appear in some folds are not diluted.
+            mean_importance = importances_df.mean(axis=0)
             abs_mean_importance = mean_importance.abs().sort_values(ascending=False)
 
             if top_n is not None:
@@ -570,6 +611,7 @@ def plot_feature_importance(
     figsize: tuple[int, int] = (10, 8),
     method: str = "native",
     directions: Optional[pd.Series] = None,
+    importance_type: Optional[str] = None,
 ):
     """
     Create a barplot of feature importance with error bars.
@@ -607,9 +649,10 @@ def plot_feature_importance(
     y_pos = np.arange(len(top_features))
 
     if directions is not None:
-        # Color by direction: risk = firebrick, protective = seagreen
+        # Color by direction: risk = firebrick, protective = seagreen, neutral = gray
+        color_map = {"Risk (+)": "firebrick", "Protective (-)": "seagreen"}
         colors = [
-            "firebrick" if directions.get(feat, "Risk (+)") == "Risk (+)" else "seagreen"
+            color_map.get(directions.get(feat, "Neutral (~0)"), "gray")
             for feat in top_features.index
         ]
         xlabel = "Importance (mean ± std)"
@@ -624,7 +667,8 @@ def plot_feature_importance(
             colors = ["firebrick" if val >= 0 else "seagreen" for val in top_features.values]
         else:
             colors = ["cornflowerblue"] * len(top_features)
-        xlabel = "Importance (mean ± std)"
+        type_str = f" [{importance_type}]" if importance_type else ""
+        xlabel = f"Importance{type_str} (mean ± std)"
         title_suffix = ""
 
     ax.barh(
@@ -655,6 +699,7 @@ def plot_feature_importance(
         legend_elements = [
             Patch(facecolor="firebrick", alpha=0.7, label="Risk (+)"),
             Patch(facecolor="seagreen", alpha=0.7, label="Protective (-)"),
+            Patch(facecolor="gray", alpha=0.7, label="Neutral (~0)"),
         ]
         ax.legend(handles=legend_elements, loc="lower right")
 
@@ -670,9 +715,16 @@ def save_feature_importance_csv(
     output_path: Path,
     method: str = "native",
     directions: Optional[pd.Series] = None,
+    importance_type: Optional[str] = None,
 ):
     """
-    Save feature importance to CSV with mean and std.
+    Save feature importance to CSV with mean, std, and per-fold presence.
+
+    Aggregation skips folds where a feature is absent (NaN-skip), so rare
+    one-hot categories that appear in only some folds are not diluted toward
+    zero. ``N_folds_present`` records how many folds each feature appeared in.
+    ``Importance_Type`` records the importance scale, which is NOT comparable
+    across model families (tree impurity vs gain vs linear coefficient vs SHAP).
 
     Parameters
     ----------
@@ -683,11 +735,15 @@ def save_feature_importance_csv(
     method : str
         Method used ("native" or "shap").
     directions : pd.Series, optional
-        Direction labels per feature (``"Risk (+)"`` / ``"Protective (-)"``).
+        Direction labels per feature.
+    importance_type : str, optional
+        Human-readable importance-scale label (e.g. "gain", "coefficient").
     """
     mean_importance = importances_df.mean(axis=0)
     std_importance = importances_df.std(axis=0)
+    n_present = importances_df.notna().sum(axis=0).astype(int)
     abs_mean_importance = mean_importance.abs()
+    type_label = importance_type or method
 
     if method == "shap":
         summary_df = pd.DataFrame(
@@ -710,6 +766,9 @@ def save_feature_importance_csv(
             }
         )
         summary_df = summary_df.sort_values("Abs_Mean_Importance", ascending=False)
+
+    summary_df["Importance_Type"] = type_label
+    summary_df["N_folds_present"] = summary_df["Feature"].map(n_present)
 
     if directions is not None:
         summary_df["Direction"] = summary_df["Feature"].map(directions).fillna("")
@@ -778,6 +837,7 @@ def process_feature_importance(
         return None
 
     importances_df, feature_names, method, directions = result
+    importance_type = _importance_type_label(model, method)
 
     model_safe = sanitize_name(model)
     target_safe = sanitize_name(target)
@@ -791,7 +851,13 @@ def process_feature_importance(
             / target_safe
             / f"{model_safe}_feature_importance{suffix}.csv"
         )
-        save_feature_importance_csv(importances_df, csv_path, method=method, directions=directions)
+        save_feature_importance_csv(
+            importances_df,
+            csv_path,
+            method=method,
+            directions=directions,
+            importance_type=importance_type,
+        )
 
     if save_plot:
         plot_path = (
@@ -808,6 +874,7 @@ def process_feature_importance(
             top_n=top_n,
             method=method,
             directions=directions,
+            importance_type=importance_type,
         )
 
     return importances_df, method

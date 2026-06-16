@@ -863,6 +863,8 @@ calibrate_probabilities = false
 probability_calibration_method = sigmoid
 # CV folds for probability calibration (must be >= 2)
 probability_calibration_cv = 5
+# Number of bins for ECE/MCE calibration metrics (must be >= 2, default: 10)
+calibration_bins = 10
 
 # [Uncertainty]
 # Miscoverage rate for conformal prediction (default 0.1 = 90% coverage)

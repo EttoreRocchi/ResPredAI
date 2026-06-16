@@ -471,9 +471,18 @@ class TestPipelineWithImputation:
         )
 
         # Verify outputs exist
-        assert (
+        metrics_csv = (
             Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
-        ).exists()
+        )
+        assert metrics_csv.exists()
+
+        metrics_df = pd.read_csv(metrics_csv).set_index("Metric")
+        for metric_name in ("AUROC", "F1 (weighted)", "MCC"):
+            mean_val = metrics_df.loc[metric_name, "Mean"]
+            assert not pd.isna(mean_val), (
+                f"{metric_name} Mean is NaN with calibrate_threshold=false "
+                f"(default config produced empty metrics)"
+            )
 
 
 class TestPipelineWithProbabilityCalibration:

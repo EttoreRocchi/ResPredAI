@@ -159,6 +159,7 @@ Controls the machine learning pipeline configuration.
     probability_calibration_cv = 5
     confidence_level = 0.95
     n_bootstrap = 1000
+    calibration_bins = 10
     compute_feature_direction = false
 
 **Parameters:**
@@ -224,6 +225,10 @@ Controls the machine learning pipeline configuration.
 
   - Must be at least 100
   - Higher values give more stable CI estimates at the cost of computation time
+
+- ``calibration_bins`` - Number of bins for the ECE/MCE calibration metrics (optional, default: ``10``)
+
+  - Must be at least 2
 
 - ``compute_feature_direction`` - Compute the direction of feature effects (optional, default: ``false``)
 

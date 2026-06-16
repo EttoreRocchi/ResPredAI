@@ -40,14 +40,18 @@ def _compute_bin_stats(
     if strategy == "uniform":
         bin_edges = np.linspace(0, 1, n_bins + 1)
     else:
-        bin_edges = np.percentile(y_prob, np.linspace(0, 100, n_bins + 1))
+        # Quantile edges can contain duplicates when probabilities are tied;
+        # dedupe so tied bins do not silently collapse into empty/degenerate bins.
+        bin_edges = np.unique(np.percentile(y_prob, np.linspace(0, 100, n_bins + 1)))
 
+    # Effective number of bins after any deduplication of edges.
+    n_effective_bins = max(1, len(bin_edges) - 1)
     bin_indices = np.digitize(y_prob, bin_edges[1:-1])
 
     accuracies: list[float] = []
     confidences: list[float] = []
     counts: list[int] = []
-    for i in range(n_bins):
+    for i in range(n_effective_bins):
         mask = bin_indices == i
         count = mask.sum()
         if count > 0:

@@ -4,9 +4,11 @@ import hashlib
 import json
 import platform
 import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import respredai
 from respredai.core.constants import FILE_REPRODUCIBILITY
@@ -26,6 +28,10 @@ def get_package_versions() -> dict:
         "numpy": "numpy",
         "pandas": "pandas",
         "scikit-learn": "sklearn",
+        "scipy": "scipy",
+        "shap": "shap",
+        "matplotlib": "matplotlib",
+        "seaborn": "seaborn",
         "joblib": "joblib",
         "xgboost": "xgboost",
         "catboost": "catboost",
@@ -38,6 +44,54 @@ def get_package_versions() -> dict:
         except ImportError:
             pass
     return packages
+
+
+def get_installed_packages() -> dict:
+    """Return name -> version for every installed distribution (pip freeze equivalent).
+
+    Captures the full environment so a run can be reproduced exactly, including
+    transitive dependencies. For bit-for-bit reproduction, recreate the
+    environment from these recorded versions and run with n_jobs=1.
+
+    Returns
+    -------
+    dict
+        Sorted mapping of distribution name to version string.
+    """
+    import importlib.metadata as importlib_metadata
+
+    packages: dict = {}
+    for dist in importlib_metadata.distributions():
+        try:
+            name = dist.metadata["Name"]
+            if name:
+                packages[name] = dist.version
+        except Exception:
+            continue
+    return dict(sorted(packages.items(), key=lambda kv: kv[0].lower()))
+
+
+def get_git_commit() -> Optional[str]:
+    """Return the current git commit SHA, or None if unavailable.
+
+    Returns
+    -------
+    str or None
+        Full commit hash, or None if not in a git repository or git is missing.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
 
 
 def hash_file(path: Path) -> str:
@@ -77,12 +131,14 @@ def create_reproducibility_manifest(config_handler, datasetter) -> dict:
     """
     return {
         "respredai_version": respredai.__version__,
+        "git_commit": get_git_commit(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "environment": {
             "python_version": sys.version,
             "platform": platform.platform(),
             "hostname": socket.gethostname(),
             "packages": get_package_versions(),
+            "installed_packages": get_installed_packages(),
         },
         "data": {
             "path": str(config_handler.data_cfg.data_path),
@@ -97,9 +153,11 @@ def create_reproducibility_manifest(config_handler, datasetter) -> dict:
         },
         "config": {
             "seed": config_handler.reproducibility_cfg.seed,
+            "n_jobs": config_handler.reproducibility_cfg.n_jobs,
             "outer_folds": config_handler.pipeline.outer_folds,
             "inner_folds": config_handler.pipeline.inner_folds,
             "models": config_handler.pipeline.models,
+            "calibration_bins": config_handler.pipeline.calibration_bins,
             "calibrate_threshold": config_handler.pipeline.calibrate_threshold,
             "threshold_method": config_handler.pipeline.threshold_method,
             "threshold_objective": config_handler.pipeline.threshold_objective,
