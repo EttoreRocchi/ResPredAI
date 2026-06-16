@@ -77,6 +77,14 @@ class _NaNSafeScaler(BaseEstimator, TransformerMixin):
         # Avoid division by zero for constant features
         self.scale_[self.scale_ == 0] = 1.0
         self.n_features_in_ = X_arr.shape[1]
+        # Record input feature names so the set_output("pandas") wrapper and
+        # downstream steps see the real column names. Without this, the wrapper
+        # calls get_feature_names_out(None) and falls back to generated names,
+        # which later mismatch the names propagated through the pipeline.
+        if hasattr(X, "columns"):
+            self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+        elif hasattr(self, "feature_names_in_"):
+            del self.feature_names_in_
         return self
 
     def transform(self, X):
@@ -86,7 +94,9 @@ class _NaNSafeScaler(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features=None):
         """Support sklearn set_output API."""
         if input_features is not None:
-            return np.array(input_features)
+            return np.asarray(input_features, dtype=object)
+        if hasattr(self, "feature_names_in_"):
+            return self.feature_names_in_
         return np.array([f"x{i}" for i in range(self.n_features_in_)])
 
 
