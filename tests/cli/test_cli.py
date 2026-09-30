@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,27 @@ class TestCLI:
         assert "valid" in result.stdout.lower()
 
     @pytest.mark.slow
+    def test_validate_config_rejects_unknown_model(self, tmp_path):
+        """A misspelt model name is a configuration error, not a run-time skip."""
+        config_path = tmp_path / "config.ini"
+        config_path.write_text(
+            "[Data]\n"
+            f"data_path = {tmp_path / 'data.csv'}\n"
+            "targets = y\n"
+            "continuous_features = age\n\n"
+            "[Pipeline]\n"
+            "models = LR, RandomForest\n"
+            "outer_folds = 3\n"
+            "inner_folds = 2\n\n"
+            "[Reproducibility]\nseed = 42\n\n"
+            "[Log]\nverbosity = 0\nlog_basename = test.log\n\n"
+            "[Resources]\nn_jobs = 1\n\n"
+            f"[Output]\nout_folder = {tmp_path / 'out'}\n"
+        )
+        result = run_cli("validate-config", str(config_path))
+        assert result.returncode == 1
+        assert re.search(r"Unknown\s+model\s+name", result.stdout)
+
     def test_validate_config_missing_file(self):
         """Test that validate-config fails with missing config file."""
         result = run_cli("validate-config", "nonexistent.ini")

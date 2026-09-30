@@ -174,8 +174,20 @@ Contains information needed for evaluation on new data:
         "feature_names_transformed": ["age", "sex_M", "category_col_A", "..."],
         "feature_dtypes": {"age": "float64", "sex": "object"},
         "training_data_path": "data.csv",
-        "training_timestamp": "2025-12-11T..."
+        "training_timestamp": "2025-12-11T...",
+        "config": {
+            "inner_folds": 3,
+            "calibrate_threshold": true,
+            "threshold_method": "oof",
+            "seed": 42,
+            "conformal_alpha": 0.1,
+            "calibration_bins": 10
+        }
     }
+
+``threshold_method`` is the resolved method (``oof`` or ``cv``), not the ``auto``
+placeholder, and ``calibration_bins`` is reused by ``respredai evaluate`` for the
+ECE and MCE metrics.
 
 Example Workflow
 ----------------
@@ -205,7 +217,7 @@ Calibration
 1. Runs GridSearchCV to find best hyperparameters
 2. Selects method: OOF (< 1000 samples) or CV (>= 1000 samples)
 3. **OOF**: Gets out-of-fold predictions, optimizes threshold using configured objective
-4. **CV**: Uses ``TunedThresholdClassifierCV`` for integrated threshold optimization
+4. **CV**: Searches the threshold with ``TunedThresholdClassifierCV`` on inner CV folds (group-aware splits when a ``group_column`` is set) and keeps the calibrated model fit on the full dataset
 5. Saves optimized threshold with the model
 
 Both calibrations are automatically applied during evaluation.

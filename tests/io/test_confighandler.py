@@ -1,3 +1,5 @@
+import logging
+from pathlib import Path
 from textwrap import dedent
 
 import pytest
@@ -66,7 +68,7 @@ class TestConfigHandler:
 
         assert config.data_cfg.targets == ["y"]
         assert config.data_cfg.continuous_features == ["age", "bmi"]
-        assert config.pipeline.models == ["lr", "rf"]
+        assert config.pipeline.models == ["LR", "RF"]
         assert config.pipeline.outer_folds == 3
         assert config.reproducibility_cfg.seed == 42
         assert config.output.save_models_enable is True
@@ -167,7 +169,7 @@ class TestConfigHandler:
         assert config.pipeline.calibrate_threshold is True
 
     def test_model_parsing(self, tmp_path):
-        """Test that model names are correctly parsed from config."""
+        """Test that model names are parsed and normalised to canonical spelling."""
 
         config_text, _, _ = self._make_config(tmp_path)
         config_path = tmp_path / "config.ini"
@@ -175,8 +177,8 @@ class TestConfigHandler:
 
         config = ConfigHandler(str(config_path))
 
-        assert "lr" in config.pipeline.models
-        assert "rf" in config.pipeline.models
+        assert "LR" in config.pipeline.models
+        assert "RF" in config.pipeline.models
         assert len(config.pipeline.models) == 2
 
 
@@ -843,3 +845,107 @@ class TestEmptyValueNormalization:
 
         config = ConfigHandler(str(config_path))
         assert config.metadata.group_column is None
+
+
+def _minimal_config(tmp_path, **overrides):
+    """Write a minimal valid config and return its path; overrides patch single keys."""
+    values = {
+        "models": "LR",
+        "outer_folds": "3",
+        "inner_folds": "2",
+        "verbosity": "0",
+        "targets": "y",
+        "continuous_features": "age, bmi",
+    }
+    values.update(overrides)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config_text = dedent(f"""
+    [Data]
+    data_path = {tmp_path / "data.csv"}
+    targets = {values["targets"]}
+    continuous_features = {values["continuous_features"]}
+
+    [Pipeline]
+    models = {values["models"]}
+    outer_folds = {values["outer_folds"]}
+    inner_folds = {values["inner_folds"]}
+
+    [Reproducibility]
+    seed = 42
+
+    [Log]
+    verbosity = {values["verbosity"]}
+    log_basename = test.log
+
+    [Resources]
+    n_jobs = 1
+
+    [Output]
+    out_folder = {tmp_path / "out"}
+    """).strip()
+    path = tmp_path / "config.ini"
+    path.write_text(config_text)
+    return str(path)
+
+
+class TestModelNameValidation:
+    """Model names are validated when the configuration is loaded."""
+
+    def test_unknown_model_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="Unknown model name"):
+            ConfigHandler(_minimal_config(tmp_path, models="LR, RandomForest"))
+
+    def test_names_are_case_insensitive_and_canonical(self, tmp_path):
+        config = ConfigHandler(_minimal_config(tmp_path, models="lr, xgb, catboost"))
+        assert config.pipeline.models == ["LR", "XGB", "CatBoost"]
+
+    def test_duplicates_are_dropped(self, tmp_path):
+        config = ConfigHandler(_minimal_config(tmp_path, models="LR, lr, RF"))
+        assert config.pipeline.models == ["LR", "RF"]
+
+    def test_empty_models_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="At least one model"):
+            ConfigHandler(_minimal_config(tmp_path, models=""))
+
+
+class TestFoldAndVerbosityValidation:
+    @pytest.mark.parametrize("key", ["outer_folds", "inner_folds"])
+    def test_single_fold_raises(self, tmp_path, key):
+        with pytest.raises(ValueError, match=f"{key} must be >= 2"):
+            ConfigHandler(_minimal_config(tmp_path, **{key: "1"}))
+
+    def test_invalid_verbosity_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="verbosity"):
+            ConfigHandler(_minimal_config(tmp_path, verbosity="7"))
+
+
+class TestDataSectionParsing:
+    def test_empty_continuous_features_means_none(self, tmp_path):
+        config = ConfigHandler(_minimal_config(tmp_path, continuous_features=""))
+        assert config.data_cfg.continuous_features == []
+
+    def test_empty_targets_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="targets"):
+            ConfigHandler(_minimal_config(tmp_path, targets=""))
+
+
+class TestLoggerHandlers:
+    def test_one_file_handler_per_process(self, tmp_path):
+        logger = logging.getLogger("respredai")
+
+        def _file_handlers():
+            return [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
+
+        try:
+            first = ConfigHandler(_minimal_config(tmp_path / "a", verbosity="1"))
+            first.initialize_logger()
+            second = ConfigHandler(_minimal_config(tmp_path / "b", verbosity="1"))
+            second.initialize_logger()
+
+            handlers = _file_handlers()
+            assert len(handlers) == 1
+            assert Path(handlers[0].baseFilename).parent == tmp_path / "b" / "out"
+        finally:
+            for handler in _file_handlers():
+                logger.removeHandler(handler)
+                handler.close()

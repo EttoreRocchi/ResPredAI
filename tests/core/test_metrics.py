@@ -718,3 +718,29 @@ class TestMakeNanMetricsCompleteness:
             f"Missing keys in _make_nan_metrics: {expected_keys - nan_keys}. "
             f"Extra keys: {nan_keys - expected_keys}"
         )
+
+
+class TestConfidenceLevelColumns:
+    def test_ci_columns_round_the_confidence_level(self, tmp_path):
+        from respredai.core.metrics import metric_dict, save_metrics_summary
+
+        rng = np.random.RandomState(0)
+        n = 60
+        y_true = np.tile([0, 1], n // 2)
+
+        y_prob_1 = np.clip(y_true * 0.3 + rng.uniform(0, 0.7, n), 0, 1)
+        y_prob = np.column_stack([1 - y_prob_1, y_prob_1])
+        y_pred = (y_prob_1 >= 0.5).astype(int)
+
+        summary = save_metrics_summary(
+            [metric_dict(y_true, y_pred, y_prob)],
+            tmp_path / "metrics.csv",
+            confidence=0.99,
+            n_bootstrap=100,
+            y_true_all=y_true,
+            y_pred_all=y_pred,
+            y_prob_all=y_prob,
+        )
+        # 0.99 * 100 is 98.99999...; the label must not truncate to 98
+        assert "CI99_lower" in summary.columns
+        assert "CI99_upper" in summary.columns

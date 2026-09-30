@@ -20,6 +20,9 @@ pytestmark = [
         "ignore:.*Mean of empty slice.*:RuntimeWarning",
         "ignore:.*Degrees of freedom <= 0.*:RuntimeWarning",
         "ignore:.*Bootstrap CI.*:UserWarning",
+        "error:.*Fold \\d+ failed for.*:UserWarning",
+        "error:.*All folds failed.*:UserWarning",
+        "error:.*Skipping model.*:UserWarning",
     ),
 ]
 
@@ -491,7 +494,7 @@ class TestPipelineWithProbabilityCalibration:
     @pytest.mark.slow
     def test_pipeline_with_sigmoid_calibration(self, tmp_path):
         """Test pipeline with sigmoid probability calibration."""
-        df = create_synthetic_data(n_samples=60, seed=42)
+        df = create_synthetic_data(n_samples=100, seed=42)
         data_path = tmp_path / "test_data.csv"
         df.to_csv(data_path, index=False)
 
@@ -545,10 +548,12 @@ class TestPipelineWithProbabilityCalibration:
             config_handler=config,
         )
 
-        # Verify outputs
-        assert (
+        metrics_csv = (
             Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
-        ).exists()
+        )
+        assert metrics_csv.exists()
+        summary = pd.read_csv(metrics_csv).set_index("Metric")
+        assert not np.isnan(summary.loc["AUROC", "Mean"])
 
     @pytest.mark.slow
     def test_pipeline_with_isotonic_calibration(self, tmp_path):
@@ -604,9 +609,12 @@ class TestPipelineWithProbabilityCalibration:
             config_handler=config,
         )
 
-        assert (
+        metrics_csv = (
             Path(config.output.out_folder) / "metrics" / "resistant" / "LR_metrics_detailed.csv"
-        ).exists()
+        )
+        assert metrics_csv.exists()
+        summary = pd.read_csv(metrics_csv).set_index("Metric")
+        assert not np.isnan(summary.loc["AUROC", "Mean"])
 
 
 class TestPipelineWithRepeatedCV:

@@ -3,6 +3,7 @@
 import base64
 import html as html_mod
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -397,14 +398,18 @@ def _generate_framework_summary_section(config_handler: Any) -> str:
             <tr><td>Threshold Optimization</td><td>{_esc(threshold_details)}</td></tr>
             <tr><td>Conformal Prediction</td><td>{conformal_details}</td></tr>
             <tr><td>Missing Data Imputation</td><td>{_esc(imputation_details)}</td></tr>
-            <tr><td>Confidence Intervals</td><td>{int(getattr(config_handler.pipeline, "confidence_level", 0.95) * 100)}% ({getattr(config_handler.pipeline, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
+            <tr><td>Confidence Intervals</td><td>{round(getattr(config_handler.pipeline, "confidence_level", 0.95) * 100)}% ({getattr(config_handler.pipeline, "n_bootstrap", 1000):,} bootstrap samples)</td></tr>
         </table>
     </section>
     """
 
 
 def _generate_results_section(
-    metrics_data: dict, models: list[str], targets: list[str], output_path: Path
+    metrics_data: dict,
+    models: list[str],
+    targets: list[str],
+    output_path: Path,
+    ci_label: str = "95% CI",
 ) -> str:
     """Generate detailed results section with tables."""
     sections = ['<section id="results">', "<h2>3. Results</h2>"]
@@ -441,12 +446,12 @@ def _generate_results_section(
                 <thead>
                     <tr>
                         <th>Model</th>
-                        <th>AUROC [95% CI]</th>
-                        <th>F1 (weighted) [95% CI]</th>
-                        <th>MCC [95% CI]</th>
-                        <th>Balanced Acc [95% CI]</th>
-                        <th>VME [95% CI]</th>
-                        <th>ME [95% CI]</th>
+                        <th>AUROC [{ci_label}]</th>
+                        <th>F1 (weighted) [{ci_label}]</th>
+                        <th>MCC [{ci_label}]</th>
+                        <th>Balanced Acc [{ci_label}]</th>
+                        <th>VME [{ci_label}]</th>
+                        <th>ME [{ci_label}]</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -603,6 +608,7 @@ def _generate_calibration_section(
     models: list[str],
     targets: list[str],
     section_num: int = 5,
+    ci_label: str = "95% CI",
 ) -> str:
     """Generate calibration diagnostics section with metrics and reliability curves."""
     sections = [
@@ -639,14 +645,14 @@ def _generate_calibration_section(
             table_rows.append(row)
 
         if table_rows:
-            sections.append("""
+            sections.append(f"""
             <table>
                 <thead>
                     <tr>
                         <th>Target</th>
-                        <th>Brier Score [95% CI]</th>
-                        <th>ECE [95% CI]</th>
-                        <th>MCE [95% CI]</th>
+                        <th>Brier Score [{ci_label}]</th>
+                        <th>ECE [{ci_label}]</th>
+                        <th>MCE [{ci_label}]</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -811,6 +817,14 @@ def _collect_metrics_data(
                     key = f"{model}_{target}"
                     metrics_data[key] = {}
 
+                    ci_lower_col = next(
+                        (c for c in df.columns if re.fullmatch(r"CI\d+_lower", c)), None
+                    )
+                    ci_upper_col = (
+                        ci_lower_col.replace("_lower", "_upper") if ci_lower_col else None
+                    )
+                    has_ci = ci_lower_col is not None and ci_upper_col in df.columns
+
                     for _, row in df.iterrows():
                         metric_name = sanitize_metric_name(row["Metric"])
                         metrics_data[key][f"{metric_name}_mean"] = row["Mean"]
@@ -818,9 +832,9 @@ def _collect_metrics_data(
                             metrics_data[key][f"{metric_name}_std"] = row["Std"]
                         if "SE" in df.columns:
                             metrics_data[key][f"{metric_name}_se"] = row["SE"]
-                        if "CI95_lower" in df.columns:
-                            metrics_data[key][f"{metric_name}_ci_lower"] = row["CI95_lower"]
-                            metrics_data[key][f"{metric_name}_ci_upper"] = row["CI95_upper"]
+                        if has_ci:
+                            metrics_data[key][f"{metric_name}_ci_lower"] = row[ci_lower_col]
+                            metrics_data[key][f"{metric_name}_ci_upper"] = row[ci_upper_col]
                 except Exception as exc:
                     logger.debug("Failed to parse metrics file %s: %s", metrics_file, exc)
                     continue
@@ -927,6 +941,8 @@ def generate_html_report(
     cm_num = 5 if has_subgroup else 4
     calib_num = cm_num + 1
     conformal_num = calib_num + 1
+    ci_pct = round(getattr(config_handler.pipeline, "confidence_level", 0.95) * 100)
+    ci_label = f"{ci_pct}% CI"
 
     # Build HTML
     html_parts = [
@@ -943,12 +959,12 @@ def generate_html_report(
         _generate_toc(targets, has_subgroup=has_subgroup),
         _generate_metadata_section(config_handler),
         _generate_framework_summary_section(config_handler),
-        _generate_results_section(metrics_data, models, targets, output_path),
+        _generate_results_section(metrics_data, models, targets, output_path, ci_label=ci_label),
         _generate_temporal_section(temporal_data, models, targets),
         subgroup_html,
         _generate_confusion_matrices_section(output_path, models, targets, section_num=cm_num),
         _generate_calibration_section(
-            output_path, metrics_data, models, targets, section_num=calib_num
+            output_path, metrics_data, models, targets, section_num=calib_num, ci_label=ci_label
         ),
         _generate_conformal_section(
             metrics_data, models, targets, config_handler, section_num=conformal_num

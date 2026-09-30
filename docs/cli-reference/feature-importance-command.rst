@@ -77,8 +77,11 @@ Native Importance (Primary)
 
 **Linear Models (Coefficients)**
 
-- **LR** (Logistic Regression) - Uses coefficient values
-- **Linear_SVC** (Linear SVM) - Uses coefficient values
+- **LR** (Logistic Regression) - Uses signed coefficient values
+- **Linear_SVC** (Linear SVM) - Uses signed coefficient values
+
+Coefficients refer to the preprocessed feature space and precede probability
+calibration; see :ref:`interpreting-linear-coefficients` below.
 
 **Tree-Based Models (Feature Importances)**
 
@@ -101,6 +104,86 @@ SHAP values are computed on the test fold of each outer CV iteration and aggrega
 
 Note: SHAP computation with KernelExplainer can be slow for large datasets.
 
+Calibrated Fold Models
+~~~~~~~~~~~~~~~~~~~~~~
+
+With ``calibrate_probabilities = true`` each outer-fold model is a
+``CalibratedClassifierCV``. It clones the best estimator found by the grid
+search and refits it once per calibration split (``probability_calibration_cv``,
+default 5), each time on a different subset of the outer training fold, and
+fits a Platt sigmoid (or isotonic map) on the held-out part. The fold's
+probability is the *average* of those sub-models.
+
+Native importances (coefficients, impurity, gain) and TreeExplainer SHAP values
+are therefore computed for **every** inner estimator of a fold model and
+averaged, so the reported value describes the whole fold model rather than one
+arbitrary sub-model. KernelExplainer SHAP values already use the fold model's
+``predict_proba`` and need no extra handling.
+
+.. _interpreting-linear-coefficients:
+
+Interpreting Linear Coefficients
+--------------------------------
+
+For ``LR`` and ``Linear_SVC`` the reported importance is the raw model
+coefficient. Three things determine what that number means:
+
+- **Feature space.** Coefficients refer to the features *as the model sees
+  them*: continuous features are standardized (z-scored) inside each fold and
+  categorical features are one-hot encoded. A coefficient is the change in
+  log-odds per standard deviation of a continuous feature, or per unit of a
+  one-hot column. The fitted scalers and encoders are stored per fold
+  (``fold_transformers`` and ``fold_ohe_transformers`` in the saved
+  ``.joblib``), so a coefficient can be mapped back to the original units by
+  dividing by the scaler's ``scale_``.
+- **Before probability calibration.** The CSV reports the mean of the
+  sub-models' raw coefficients (and, in the per-fold CSV, intercepts). With
+  sigmoid calibration scikit-learn maps a decision value ``f`` to
+  ``expit(-(a * f + b))``, so the slope of the calibrated logit of a sub-model
+  is ``-a * coef`` and its offset is ``-(a * intercept + b)``. The Platt
+  offset ``b`` also absorbs the prior shift introduced by
+  ``class_weight="balanced"``. Coefficients or intercepts recovered by
+  regressing the calibrated probabilities on the covariates are therefore
+  **not** expected to match the raw values in the CSV, and the average of
+  several sigmoids is only approximately a single logistic function.
+- **The grid-search refit is not the predictive model.** When calibration is
+  enabled, ``GridSearchCV.best_estimator_`` (refit on the whole outer training
+  fold) only acts as a template: its hyperparameters are kept, while its
+  fitted coefficients and intercept are discarded and never used for
+  prediction. Reading ``intercept_`` from it does not describe the
+  probabilities the pipeline outputs.
+
+Everything needed to inspect a fold model is in the saved ``.joblib``:
+
+.. code-block:: python
+
+    import joblib
+
+    data = joblib.load("output/models/LR_Target1_models.joblib")
+    for position, model in enumerate(data["fold_models"]):
+        if model is None:  # failed fold
+            continue
+        _, feature_names = data["fold_test_data"][position]
+        # checkpoints written by earlier releases may wrap the calibrator in a
+        # TunedThresholdClassifierCV; current ones store the calibrator itself
+        calibrator = model.estimator_ if hasattr(model, "estimator_") else model
+        for sub in calibrator.calibrated_classifiers_:
+            lr = sub.estimator  # LogisticRegression of this calibration split
+            platt = sub.calibrators[0]  # sigmoid calibrator with a_ and b_
+            raw_coef, raw_intercept = lr.coef_[0], lr.intercept_[0]
+            effective_coef = -platt.a_ * raw_coef
+            effective_intercept = -(platt.a_ * raw_intercept + platt.b_)
+        transformer = data["fold_transformers"][position]
+        scaler = transformer.named_transformers_["scaler"]  # StandardScaler
+        # with imputation enabled the scaler is the last step of the
+        # "continuous" pipeline: named_transformers_["continuous"]["scaler"]
+        # scaler.mean_ and scaler.scale_ map standardized coefficients to raw units
+
+The same walk over inner estimators is available as
+``respredai.visualization.feature_importance.iter_inner_estimators(model)``.
+Without probability calibration the fold model is the grid-search estimator
+itself and ``calibrated_classifiers_`` does not exist.
+
 Output Files
 ------------
 
@@ -111,9 +194,11 @@ The command generates files in the following structure:
     output_folder/
     └── feature_importance/
         └── {target}/
-            ├── {model}_feature_importance.csv         # Native importance (if available)
+            ├── {model}_feature_importance.csv               # Native importance (if available)
+            ├── {model}_feature_importance_per_fold.csv      # One row per outer fold
             ├── {model}_feature_importance.png
-            ├── {model}_feature_importance_shap.csv    # SHAP importance (fallback)
+            ├── {model}_feature_importance_shap.csv          # SHAP importance (fallback)
+            ├── {model}_feature_importance_shap_per_fold.csv
             └── {model}_feature_importance_shap.png
 
 Files have ``_shap`` suffix when SHAP is used instead of native importance.
@@ -167,6 +252,30 @@ For models using SHAP fallback:
      - Standard deviation across folds
    * - ``Mean±Std``
      - Formatted string with mean ± std
+
+CSV File Format (Per Fold)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``_per_fold`` file exposes the values behind the summary mean and std,
+one row per successful outer fold:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Column
+     - Description
+   * - ``Fold``
+     - 1-based outer fold number (with repeated CV, folds are numbered
+       consecutively across repeats, matching the order of ``fold_models``
+       in the saved ``.joblib``)
+   * - ``Intercept``
+     - Intercept of the fold model, averaged over its inner estimators
+       (linear models only; same feature space and pre-calibration scale as
+       the coefficients)
+   * - one column per feature
+     - Importance/coefficient (or mean absolute SHAP value) of that fold, in the same
+       feature order as the summary CSV
 
 Features are **sorted by importance** (absolute mean value).
 

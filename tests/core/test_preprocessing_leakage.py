@@ -1,6 +1,7 @@
 """Tests that per-fold one-hot encoding is fit on training data only."""
 
 import pandas as pd
+import pytest
 
 from respredai.core.workflow import _apply_ohe_and_clean, _build_ohe_transformer
 
@@ -16,7 +17,9 @@ class TestOheFitOnTrainOnly:
         X_test = pd.DataFrame({"cat": ["A", "C"], "num": [5.0, 6.0]})
 
         ohe = _build_ohe_transformer(["cat"])
-        X_train_ohe, X_test_ohe = _apply_ohe_and_clean(ohe, X_train, X_test)
+        # sklearn reports the unseen category; that warning is the expected behaviour
+        with pytest.warns(UserWarning, match="unknown categories"):
+            X_train_ohe, X_test_ohe = _apply_ohe_and_clean(ohe, X_train, X_test)
 
         # Columns come from train only and match exactly across train/test
         assert list(X_train_ohe.columns) == list(X_test_ohe.columns)

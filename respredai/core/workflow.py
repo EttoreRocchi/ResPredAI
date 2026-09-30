@@ -22,6 +22,7 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import OneHotEncoder
 
 from respredai.core.constants import (
+    DEFAULT_CALIBRATION_BINS,
     DEFAULT_THRESHOLD,
     DIR_CALIBRATION,
     DIR_METRICS,
@@ -31,6 +32,7 @@ from respredai.core.constants import (
     FILE_EVALUATION_SUMMARY,
     FILE_TRAINING_METADATA,
     SAMPLE_SIZE_THRESHOLD_DECISION,
+    sanitize_feature_names,
     sanitize_name,
 )
 from respredai.core.cv_utils import get_outer_cv, get_temporal_split
@@ -144,15 +146,11 @@ def _apply_ohe_and_clean(ohe_transformer, X_train, X_test=None):
         Transformed training data, or (train, test) if *X_test* is given.
     """
     X_train_ohe = ohe_transformer.fit_transform(X_train)
-    X_train_ohe.columns = X_train_ohe.columns.str.replace("<", "_lt_", regex=False).str.replace(
-        ">", "_gt_", regex=False
-    )
+    X_train_ohe.columns = sanitize_feature_names(X_train_ohe.columns)
 
     if X_test is not None:
         X_test_ohe = ohe_transformer.transform(X_test)
-        X_test_ohe.columns = X_test_ohe.columns.str.replace("<", "_lt_", regex=False).str.replace(
-            ">", "_gt_", regex=False
-        )
+        X_test_ohe.columns = sanitize_feature_names(X_test_ohe.columns)
         # Align test columns to match train (add missing as 0, reorder)
         for col in X_train_ohe.columns:
             if col not in X_test_ohe.columns:
@@ -171,32 +169,27 @@ def _resolve_threshold_method(config_handler, n_train_samples):
     return method
 
 
-def _predict_with_threshold(
-    classifier, X_scaled, calibrate_threshold, threshold_method, best_threshold
-):
-    """Predict class labels using calibrated threshold.
+def _predict_with_threshold(classifier, X_scaled, calibrate_threshold, best_threshold):
+    """Predict class labels, applying the tuned decision threshold when enabled.
 
     Parameters
     ----------
     classifier : estimator
-        Fitted classifier (possibly TunedThresholdClassifierCV).
+        Fitted (possibly calibrated) classifier.
     X_scaled : array-like
         Scaled feature matrix.
     calibrate_threshold : bool
-        Whether threshold calibration was enabled.
-    threshold_method : str
-        'oof' or 'cv'.
+        Whether threshold optimization was enabled.
     best_threshold : float
-        Threshold from OOF optimization (used only when method='oof').
+        Tuned threshold on the positive-class probability (``oof`` and ``cv``
+        methods alike); ignored when *calibrate_threshold* is False.
 
     Returns
     -------
     tuple of (y_pred, y_prob)
     """
     y_prob = classifier.predict_proba(X_scaled)
-    if calibrate_threshold and threshold_method == "cv":
-        y_pred = classifier.predict(X_scaled)
-    elif calibrate_threshold and threshold_method == "oof":
+    if calibrate_threshold:
         y_pred = (y_prob[:, 1] >= best_threshold).astype(int)
     else:
         y_pred = classifier.predict(X_scaled)
@@ -407,7 +400,6 @@ def _optimize_threshold(
     grid_estimator,
     best_params: dict,
     groups=None,
-    prob_calib_splits=None,
 ):
     """Find the optimal decision threshold.
 
@@ -428,12 +420,12 @@ def _optimize_threshold(
         Best hyperparameters from GridSearchCV.
     groups : array-like or None
         Pre-subsetted group labels for the training data.
-    prob_calib_splits : list or int or None
-        CV splits from probability calibration (used in CV branch).
 
     Returns
     -------
-    tuple of (best_classifier, best_threshold, threshold_method)
+    tuple of (best_estimator, best_threshold, threshold_method)
+        *best_estimator* is returned unchanged; *best_threshold* applies to its
+        positive-class probability for both methods.
     """
     threshold_method = _resolve_threshold_method(config_handler, len(y_train))
 
@@ -503,19 +495,10 @@ def _optimize_threshold(
         if config_handler.pipeline.calibrate_probabilities:
             base_est = clone(grid_estimator)
             base_est.set_params(**best_params)
-
-            if groups is not None:
-                calib_cv = StratifiedGroupKFold(
-                    n_splits=config_handler.pipeline.probability_calibration_cv,
-                    shuffle=True,
-                    random_state=config_handler.reproducibility_cfg.seed,
-                )
-            else:
-                calib_cv = prob_calib_splits  # int - safe for any subset
             estimator_for_threshold = CalibratedClassifierCV(
                 estimator=base_est,
                 method=config_handler.pipeline.probability_calibration_method,
-                cv=calib_cv,
+                cv=config_handler.pipeline.probability_calibration_cv,
                 n_jobs=1,
             )
         else:
@@ -523,10 +506,12 @@ def _optimize_threshold(
             estimator_for_threshold.set_params(**best_params)
 
         if groups is not None:
-            inner_tuner_cv = StratifiedGroupKFold(
-                n_splits=config_handler.pipeline.inner_folds,
-                shuffle=True,
-                random_state=config_handler.reproducibility_cfg.seed,
+            inner_tuner_cv = list(
+                StratifiedGroupKFold(
+                    n_splits=config_handler.pipeline.inner_folds,
+                    shuffle=True,
+                    random_state=config_handler.reproducibility_cfg.seed,
+                ).split(X_train_scaled, y_train, groups)
             )
         else:
             inner_tuner_cv = StratifiedKFold(
@@ -541,12 +526,8 @@ def _optimize_threshold(
             scoring=objective_scorer,
             n_jobs=1,
         )
-
-        fit_kwargs = {}
-        if groups is not None:
-            fit_kwargs["groups"] = groups
-        tuned_model.fit(X_train_scaled, y_train, **fit_kwargs)
-        return tuned_model, tuned_model.best_threshold_, threshold_method
+        tuned_model.fit(X_train_scaled, y_train)
+        return best_estimator, float(tuned_model.best_threshold_), threshold_method
 
 
 def _make_nan_metrics() -> dict:
@@ -729,13 +710,17 @@ def perform_pipeline(
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
                         all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
 
-                        # Initialize empty calibration data (per-fold data not saved)
-                        fold_y_true_calib[target] = []
-                        fold_y_prob_calib[target] = []
+                        # Restore per-fold data for reliability curves
+                        fold_y_true_calib[target] = model_data["metrics"].get(
+                            "fold_y_true_calib", []
+                        )
+                        fold_y_prob_calib[target] = model_data["metrics"].get(
+                            "fold_y_prob_calib", []
+                        )
 
                         if progress_callback:
                             progress_callback.skip_target(
-                                target, config_handler.pipeline.outer_folds, "saved models"
+                                target, total_outer_iterations, "saved models"
                             )
 
                         continue
@@ -761,6 +746,13 @@ def perform_pipeline(
                         all_y_pred[target] = model_data["metrics"].get("all_y_pred", [])
                         all_y_prob[target] = model_data["metrics"].get("all_y_prob", [])
                         all_test_indices[target] = model_data["metrics"].get("all_test_indices", [])
+                        # Restore per-fold data for reliability curves
+                        fold_y_true_calib[target] = model_data["metrics"].get(
+                            "fold_y_true_calib", []
+                        )
+                        fold_y_prob_calib[target] = model_data["metrics"].get(
+                            "fold_y_prob_calib", []
+                        )
                         # Conformal results are not saved in checkpoints; start fresh
 
                         if config_handler.reproducibility_cfg.verbosity:
@@ -793,7 +785,7 @@ def perform_pipeline(
             # Start target progress
             if progress_callback:
                 progress_callback.start_target(
-                    target, total_folds=config_handler.pipeline.outer_folds, resumed_from=start_fold
+                    target, total_folds=total_outer_iterations, resumed_from=start_fold
                 )
 
             # Pass groups to split if available
@@ -807,7 +799,7 @@ def perform_pipeline(
 
                 # Start fold progress
                 if progress_callback:
-                    progress_callback.start_fold(i + 1, config_handler.pipeline.outer_folds)
+                    progress_callback.start_fold(i + 1, total_outer_iterations)
 
                 if config_handler.reproducibility_cfg.verbosity == 2:
                     config_handler.logger.info(f"Starting iteration: {i + 1}.")
@@ -850,9 +842,8 @@ def perform_pipeline(
                     best_params = grid.best_params_
 
                     # Step 2.5: Post-hoc probability calibration (if enabled)
-                    prob_calib_splits = None
                     if config_handler.pipeline.calibrate_probabilities:
-                        best_estimator, prob_calib_splits = _apply_probability_calibration(
+                        best_estimator, _ = _apply_probability_calibration(
                             best_estimator,
                             config_handler,
                             X_train_scaled,
@@ -869,7 +860,7 @@ def perform_pipeline(
 
                     # Step 3: Threshold optimization (if enabled)
                     if config_handler.pipeline.calibrate_threshold:
-                        best_classifier, best_threshold, threshold_method = _optimize_threshold(
+                        best_classifier, best_threshold, _ = _optimize_threshold(
                             best_estimator,
                             config_handler,
                             X_train_scaled,
@@ -879,19 +870,16 @@ def perform_pipeline(
                             groups=datasetter.groups[train_set]
                             if datasetter.groups is not None
                             else None,
-                            prob_calib_splits=prob_calib_splits,
                         )
                     else:
                         best_classifier = best_estimator
                         best_threshold = DEFAULT_THRESHOLD
-                        threshold_method = "oof"  # placeholder, unused when not calibrating
 
                     # Step 4: Predict on test set using calibrated threshold
                     y_pred, y_prob = _predict_with_threshold(
                         best_classifier,
                         X_test_scaled,
                         config_handler.pipeline.calibrate_threshold,
-                        threshold_method,
                         best_threshold,
                     )
 
@@ -971,38 +959,29 @@ def perform_pipeline(
                         else:
                             fold_metrics[f"empirical_coverage_class_{cls}"] = float("nan")
 
-                    all_metrics[target].append(fold_metrics)
+                    fold_cm = confusion_matrix(
+                        y_true=y_test, y_pred=y_pred, normalize="true", labels=[0, 1]
+                    )
+                    # Transformed feature names, stored with the test data for SHAP
+                    fold_feature_names = list(fold_transformer.get_feature_names_out())
 
-                    # Store sample-level predictions for bootstrap CI
+                    all_metrics[target].append(fold_metrics)
                     all_y_true[target].extend(y_test.values)
                     all_y_pred[target].extend(y_pred)
                     all_y_prob[target].extend(y_prob)
                     all_test_indices[target].extend(test_set)
-
-                    # Store per-fold data for reliability curves (as separate arrays)
                     fold_y_true_calib[target].append(y_test.values)
                     fold_y_prob_calib[target].append(y_prob[:, 1])
-
-                    # Store individual metrics for backwards compatibility
                     f1scores[target].append(fold_metrics["F1 (weighted)"])
                     mccs[target].append(fold_metrics["MCC"])
                     aurocs[target].append(fold_metrics["AUROC"])
-                    cms[target].append(
-                        confusion_matrix(
-                            y_true=y_test, y_pred=y_pred, normalize="true", labels=[0, 1]
-                        )
-                    )
-
-                    # Store the best model, transformer, threshold, and hyperparameters for this fold
+                    cms[target].append(fold_cm)
                     fold_models.append(best_classifier)
                     fold_transformers.append(fold_transformer)
                     fold_ohe_transformers.append(fold_ohe)
                     fold_thresholds.append(best_threshold)
                     fold_hyperparams.append(best_params)
-                    # Store test data for SHAP computation (use transformed feature names)
-                    fold_test_data.append(
-                        (X_test_scaled, list(fold_transformer.get_feature_names_out()))
-                    )
+                    fold_test_data.append((X_test_scaled, fold_feature_names))
 
                     # Update progress for successful fold
                     if progress_callback:
@@ -1046,6 +1025,9 @@ def perform_pipeline(
                         "all_y_pred": all_y_pred[target],
                         "all_y_prob": all_y_prob[target],
                         "all_test_indices": all_test_indices[target],
+                        # Per-fold data for reliability curves
+                        "fold_y_true_calib": fold_y_true_calib[target],
+                        "fold_y_prob_calib": fold_y_prob_calib[target],
                     }
 
                     save_models(
@@ -1315,9 +1297,18 @@ def perform_temporal_validation(
             f"Training on {len(models)} models: {models}."
         )
 
+    # Model/target combinations that failed (surfaced as a hard error at the end).
+    failed_targets: list[str] = []
+
+    if progress_callback:
+        progress_callback.start(total_work=len(models) * len(Y.columns))
+
     for model_name in models:
         if config_handler.reproducibility_cfg.verbosity:
             config_handler.logger.info(f"[Temporal] Starting model: {model_name}")
+
+        if progress_callback:
+            progress_callback.start_model(model_name, total_work=len(Y.columns))
 
         try:
             transformer, grid = _get_pipeline_for_model(model_name, config_handler, datasetter)
@@ -1329,6 +1320,8 @@ def perform_temporal_validation(
             warnings.warn(
                 f"[Temporal] Skipping model {model_name} due to initialization error: {e}"
             )
+            if progress_callback:
+                progress_callback.skip_model(model_name, len(Y.columns), "initialization error")
             continue
 
         # Scale features
@@ -1344,6 +1337,9 @@ def perform_temporal_validation(
             y_train = Y[target].iloc[train_idx]
             y_test = Y[target].iloc[test_idx]
 
+            if progress_callback:
+                progress_callback.start_target(target, total_folds=1)
+
             try:
                 # Hyperparameter tuning with GridSearchCV
                 fit_params = {}
@@ -1356,9 +1352,8 @@ def perform_temporal_validation(
                 best_params = grid.best_params_
 
                 # Post-hoc probability calibration (if enabled)
-                prob_calib_splits = None
                 if config_handler.pipeline.calibrate_probabilities:
-                    best_estimator, prob_calib_splits = _apply_probability_calibration(
+                    best_estimator, _ = _apply_probability_calibration(
                         best_estimator,
                         config_handler,
                         X_train_scaled,
@@ -1370,7 +1365,7 @@ def perform_temporal_validation(
 
                 # Threshold optimization (if enabled)
                 if config_handler.pipeline.calibrate_threshold:
-                    best_classifier, best_threshold, threshold_method = _optimize_threshold(
+                    best_classifier, best_threshold, _ = _optimize_threshold(
                         best_estimator,
                         config_handler,
                         X_train_scaled,
@@ -1380,19 +1375,16 @@ def perform_temporal_validation(
                         groups=datasetter.groups[train_idx]
                         if datasetter.groups is not None
                         else None,
-                        prob_calib_splits=prob_calib_splits,
                     )
                 else:
                     best_classifier = best_estimator
                     best_threshold = DEFAULT_THRESHOLD
-                    threshold_method = "oof"  # placeholder, unused when not calibrating
 
                 # Predict on test set
                 y_pred, y_prob = _predict_with_threshold(
                     best_classifier,
                     X_test_scaled,
                     config_handler.pipeline.calibrate_threshold,
-                    threshold_method,
                     best_threshold,
                 )
 
@@ -1437,8 +1429,7 @@ def perform_temporal_validation(
                 )
 
                 alpha = config_handler.reproducibility_cfg.conformal_alpha
-                # Wrap scaler + classifier in a Pipeline so each CV fold refits
-                # the scaler on its own training split, avoiding scaling leakage.
+
                 conformal_pipe = SkPipeline(
                     [
                         ("scaler", sklearn_clone(transformer)),
@@ -1550,12 +1541,18 @@ def perform_temporal_validation(
                         f"MCC={temporal_metrics['MCC']:.3f}"
                     )
 
+                if progress_callback:
+                    progress_callback.complete_fold(1, temporal_metrics)
+
             except Exception as e:
                 if config_handler.reproducibility_cfg.verbosity:
                     config_handler.logger.error(
                         f"[Temporal] Error for {model_name} - {target}: {e}"
                     )
-                warnings.warn(f"[Temporal] {model_name} - {target} failed: {e}")
+                warnings.warn(f"[Temporal] {model_name} - {target} failed: {e}", stacklevel=2)
+                failed_targets.append(f"{model_name}/{target}")
+                if progress_callback:
+                    progress_callback.complete_fold(1, _make_nan_metrics())
                 continue
 
         # Save temporal confusion matrices
@@ -1569,8 +1566,22 @@ def perform_temporal_validation(
                 model=f"{sanitize_name(model_name)}_temporal",
             )
 
+        if progress_callback:
+            progress_callback.complete_model(model_name)
+
+    if progress_callback:
+        progress_callback.stop()
+
     if config_handler.reproducibility_cfg.verbosity:
         config_handler.logger.info("[Temporal] Temporal validation completed.")
+
+    # A failed model/target is a hard failure, not a silent gap in the results.
+    if failed_targets:
+        raise RuntimeError(
+            "Temporal validation failed for: "
+            + ", ".join(failed_targets)
+            + ". See the warnings and the log for details."
+        )
 
 
 def perform_training(
@@ -1628,11 +1639,13 @@ def perform_training(
         "config": {
             "inner_folds": config_handler.pipeline.inner_folds,
             "calibrate_threshold": config_handler.pipeline.calibrate_threshold,
-            "threshold_method": config_handler.pipeline.threshold_method
+            # The resolved method: "auto" is decided by the training set size
+            "threshold_method": _resolve_threshold_method(config_handler, len(X))
             if config_handler.pipeline.calibrate_threshold
             else None,
             "seed": config_handler.reproducibility_cfg.seed,
             "conformal_alpha": config_handler.reproducibility_cfg.conformal_alpha,
+            "calibration_bins": config_handler.pipeline.calibration_bins,
         },
     }
 
@@ -1668,9 +1681,8 @@ def perform_training(
             best_params = grid.best_params_
 
             # Post-hoc probability calibration (if enabled)
-            prob_calib_splits = None
             if config_handler.pipeline.calibrate_probabilities:
-                best_estimator, prob_calib_splits = _apply_probability_calibration(
+                best_estimator, _ = _apply_probability_calibration(
                     best_estimator,
                     config_handler,
                     X_scaled,
@@ -1695,7 +1707,6 @@ def perform_training(
                     grid_estimator=grid.estimator,
                     best_params=best_params,
                     groups=datasetter.groups,
-                    prob_calib_splits=prob_calib_splits,
                 )
 
             # Compute conformal q_hat from OOF predictions on training data.
@@ -1710,7 +1721,12 @@ def perform_training(
             conformal_pipe = SkPipeline(
                 [
                     ("scaler", sklearn_clone(transformer)),
-                    ("classifier", sklearn_clone(best_estimator)),
+                    (
+                        "classifier",
+                        _conformal_safe_clone(
+                            best_estimator, config_handler.pipeline.probability_calibration_cv
+                        ),
+                    ),
                 ]
             )
             if datasetter.groups is not None:
@@ -1825,6 +1841,8 @@ def perform_evaluation(
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
 
+    n_bins = int(metadata.get("config", {}).get("calibration_bins", DEFAULT_CALIBRATION_BINS))
+
     # Load new data using the same parser as training (consistent CSV handling)
     new_data = DataSetter._read_data(str(data_path))
 
@@ -1882,9 +1900,7 @@ def perform_evaluation(
 
         # Apply OHE using the saved training transformer (ensures identical encoding)
         X_encoded = bundle_ohe.transform(X_new)
-        X_encoded.columns = X_encoded.columns.str.replace("<", "_lt_", regex=False).str.replace(
-            ">", "_gt_", regex=False
-        )
+        X_encoded.columns = sanitize_feature_names(X_encoded.columns)
 
         # Scale features
         X_scaled = transformer.transform(X_encoded)
@@ -1894,7 +1910,7 @@ def perform_evaluation(
         y_pred = (y_prob[:, 1] >= threshold).astype(int)
 
         # Calculate metrics
-        metrics = metric_dict(y_true=y_true, y_pred=y_pred, y_prob=y_prob)
+        metrics = metric_dict(y_true=y_true, y_pred=y_pred, y_prob=y_prob, n_bins=n_bins)
         results[f"{model_name}_{target_name}"] = metrics
 
         # Save predictions with conformal prediction sets

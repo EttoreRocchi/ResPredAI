@@ -1,5 +1,6 @@
 """Data validation tests."""
 
+import warnings
 from textwrap import dedent
 
 import numpy as np
@@ -9,11 +10,20 @@ import pytest
 from respredai.io.config import ConfigHandler, DataSetter
 
 
-def _write(tmp_path, df, targets="y", continuous="age, bmi", group=None, imputation="none"):
+def _write(
+    tmp_path,
+    df,
+    targets="y",
+    continuous="age, bmi",
+    group=None,
+    imputation="none",
+    subgroup=None,
+):
     """Write a data CSV + config file and return a loaded ConfigHandler."""
     data_path = tmp_path / "data.csv"
     df.to_csv(data_path, index=False)
     group_line = f"group_column = {group}" if group else ""
+    subgroup_line = f"subgroup_columns = {subgroup}" if subgroup else ""
     config_text = dedent(f"""
     [Data]
     data_path = {data_path}
@@ -22,6 +32,7 @@ def _write(tmp_path, df, targets="y", continuous="age, bmi", group=None, imputat
 
     [Metadata]
     {group_line}
+    {subgroup_line}
 
     [Pipeline]
     models = LR
@@ -133,3 +144,38 @@ class TestBinaryTargetValidationModes:
         df = pd.DataFrame({"y": [1, 1, 1]})
         with pytest.raises(ValueError, match="one class"):
             DataSetter._validate_binary_targets(df, ["y"])
+
+
+class TestMissingValueScope:
+    """With imputation disabled, only the feature columns must be complete."""
+
+    def test_nan_in_subgroup_column_is_allowed(self, tmp_path):
+        df = _base_df()
+        df["ward"] = np.where(np.arange(len(df)) % 2 == 0, "ICU", "General").astype(object)
+        df.loc[0, "ward"] = np.nan
+        config = _write(tmp_path, df, subgroup="ward")
+        ds = DataSetter(config)
+        assert "ward" not in ds.X.columns
+        assert ds.subgroup_data["ward"].isna().sum() == 1
+
+    def test_nan_in_feature_column_names_the_column(self, tmp_path):
+        df = _base_df()
+        df.loc[0, "bmi"] = np.nan
+        config = _write(tmp_path, df)
+        with pytest.raises(ValueError, match=r"feature columns \['bmi'\]"):
+            DataSetter(config)
+
+
+class TestHighCardinalityWarning:
+    def test_high_cardinality_column_warns(self, tmp_path):
+        df = _base_df(n=60)
+        df["sample_id"] = [f"S{i}" for i in range(len(df))]
+        config = _write(tmp_path, df)
+        with pytest.warns(UserWarning, match="high cardinality"):
+            DataSetter(config)
+
+    def test_ordinary_categorical_does_not_warn(self, tmp_path):
+        config = _write(tmp_path, _base_df(n=60))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            DataSetter(config)

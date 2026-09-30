@@ -2,6 +2,7 @@
 
 import logging
 import os
+import warnings
 from collections.abc import Iterable
 from configparser import ConfigParser
 from dataclasses import dataclass, field
@@ -15,12 +16,16 @@ from respredai.core.constants import (
     DEFAULT_CALIBRATION_BINS,
     DEFAULT_CONFIDENCE_LEVEL,
     DEFAULT_N_BOOTSTRAP,
+    HIGH_CARDINALITY_FRACTION,
+    HIGH_CARDINALITY_MIN_LEVELS,
     IMPUTATION_ESTIMATORS,
     IMPUTATION_METHODS,
     IMPUTATION_STRATEGIES,
     THRESHOLD_METHODS,
     THRESHOLD_OBJECTIVES,
     VALIDATION_STRATEGIES,
+    VERBOSITY_LEVELS,
+    normalize_model_names,
 )
 
 
@@ -165,19 +170,25 @@ class ConfigHandler:
         self._validate_cross_field_constraints()
 
     def _parse_data_section(self, config: ConfigParser) -> None:
-        """Parse [Data] section."""
+        """Parse [Data] section.
+
+        Empty entries are dropped, so ``continuous_features =`` (or omitting the
+        key) means that every feature is categorical.
+        """
+        targets = [t.strip() for t in config.get("Data", "targets").split(",") if t.strip()]
+        if not targets:
+            raise ValueError("[Data] targets must list at least one target column")
+        continuous_raw = config.get("Data", "continuous_features", fallback="")
         self.data_cfg = DataConfig(
             data_path=config.get("Data", "data_path"),
-            targets=[t.strip() for t in config.get("Data", "targets").split(",")],
-            continuous_features=[
-                f.strip() for f in config.get("Data", "continuous_features").split(",")
-            ],
+            targets=targets,
+            continuous_features=[f.strip() for f in continuous_raw.split(",") if f.strip()],
         )
 
     def _parse_pipeline_section(self, config: ConfigParser) -> None:
         """Parse [Pipeline] section including probability calibration."""
         self.pipeline = PipelineConfig(
-            models=[m.strip() for m in config.get("Pipeline", "models").split(",")],
+            models=normalize_model_names(config.get("Pipeline", "models").split(",")),
             outer_folds=config.getint("Pipeline", "outer_folds"),
             inner_folds=config.getint("Pipeline", "inner_folds"),
             outer_cv_repeats=config.getint("Pipeline", "outer_cv_repeats", fallback=1),
@@ -283,6 +294,15 @@ class ConfigHandler:
         if not 1 <= self.output.model_compression <= 9:
             raise ValueError(
                 f"Model compression must be between 1 and 9, got {self.output.model_compression}"
+            )
+        if self.pipeline.outer_folds < 2:
+            raise ValueError(f"outer_folds must be >= 2, got {self.pipeline.outer_folds}")
+        if self.pipeline.inner_folds < 2:
+            raise ValueError(f"inner_folds must be >= 2, got {self.pipeline.inner_folds}")
+        if self.reproducibility_cfg.verbosity not in VERBOSITY_LEVELS:
+            raise ValueError(
+                f"[Log] verbosity must be one of {VERBOSITY_LEVELS}, "
+                f"got {self.reproducibility_cfg.verbosity}"
             )
         if self.pipeline.threshold_method not in THRESHOLD_METHODS:
             raise ValueError(
@@ -410,6 +430,10 @@ class ConfigHandler:
 
         logger = logging.getLogger("respredai")
         logger.setLevel("INFO")
+        for existing in list(logger.handlers):
+            if isinstance(existing, logging.FileHandler):
+                logger.removeHandler(existing)
+                existing.close()
         logger.addHandler(handler)
         return logger
 
@@ -456,12 +480,6 @@ class DataSetter:
             Configuration handler with data paths and parameters
         """
         self.data = self._read_data(config_handler.data_cfg.data_path)
-        self._validate_data(
-            self.data,
-            config_handler.data_cfg.targets,
-            config_handler.imputation.method,
-            continuous_features=config_handler.data_cfg.continuous_features,
-        )
 
         # Columns to drop from X (targets + metadata columns)
         cols_to_drop = list(config_handler.data_cfg.targets)
@@ -519,10 +537,19 @@ class DataSetter:
             if col not in cols_to_drop:
                 cols_to_drop.append(col)
 
+        self._validate_data(
+            self.data,
+            config_handler.data_cfg.targets,
+            config_handler.imputation.method,
+            continuous_features=config_handler.data_cfg.continuous_features,
+            feature_columns=[c for c in self.data.columns if c not in cols_to_drop],
+        )
+
         self.X = self.data.drop(cols_to_drop, axis=1)
         self.Y = self.data[config_handler.data_cfg.targets]
         self.targets = config_handler.data_cfg.targets
         self.continuous_features = config_handler.data_cfg.continuous_features
+        self._warn_high_cardinality(self.X, self.continuous_features)
 
     @staticmethod
     def _read_data(data_path: str) -> pd.DataFrame:
@@ -578,11 +605,38 @@ class DataSetter:
                 )
 
     @staticmethod
+    def _warn_high_cardinality(X: pd.DataFrame, continuous_features: Iterable) -> None:
+        """Warn about high-cardinality categorical features.
+
+        Every column that is neither a target nor a declared metadata column is
+        used as a feature and one-hot encoded into one column per level, so a
+        column with very many levels inflates the feature space without notice.
+        """
+        n_rows = len(X)
+        continuous = set(continuous_features)
+        for col in X.columns:
+            if col in continuous:
+                continue
+            n_levels = int(X[col].nunique(dropna=True))
+            if (
+                n_levels >= HIGH_CARDINALITY_MIN_LEVELS
+                and n_levels > HIGH_CARDINALITY_FRACTION * n_rows
+            ):
+                warnings.warn(
+                    f"Categorical feature '{col}' has high cardinality ({n_levels} "
+                    f"distinct values over {n_rows} rows) and will be one-hot encoded "
+                    f"into {n_levels} columns.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+    @staticmethod
     def _validate_data(
         data: pd.DataFrame,
         targets: Iterable,
         imputation_method: str = "none",
         continuous_features: Optional[Iterable] = None,
+        feature_columns: Optional[Iterable] = None,
     ) -> None:
         """
         Validate the loaded data.
@@ -597,6 +651,10 @@ class DataSetter:
             Imputation method from config (none, simple, knn, iterative)
         continuous_features : Iterable, optional
             Declared continuous feature names; validated to exist in the data.
+        feature_columns : Iterable, optional
+            Columns used as features. When given, the missing-value check is
+            restricted to them (metadata columns such as subgroup labels may
+            contain NaN); otherwise the whole frame is checked.
 
         Raises
         ------
@@ -621,9 +679,12 @@ class DataSetter:
         # Targets must be binary 0/1 with both classes and no missing values
         DataSetter._validate_binary_targets(data, targets)
 
-        # Check no missing values in features (only if imputation is disabled)
-        if imputation_method == "none" and data.isnull().values.any():
+        # Check no missing values in the features (only if imputation is disabled).
+        # Target, group and temporal columns have their own checks above.
+        features = data if feature_columns is None else data[list(feature_columns)]
+        if imputation_method == "none" and features.isnull().values.any():
+            missing_cols = sorted(features.columns[features.isnull().any()].tolist(), key=str)
             raise ValueError(
-                "Dataset contains missing values. "
+                f"Dataset contains missing values in feature columns {missing_cols}. "
                 "Enable imputation in config or remove missing values."
             )

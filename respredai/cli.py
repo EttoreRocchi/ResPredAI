@@ -21,6 +21,7 @@ from respredai.core.constants import (
     DIR_FEATURE_IMPORTANCE,
     DIR_TRAINED_MODELS,
     FILE_TRAINING_METADATA,
+    normalize_model_names,
 )
 from respredai.core.workflow import (
     perform_evaluation,
@@ -143,6 +144,9 @@ class TrainingProgressCallback:
         if self.quiet:
             return
 
+        self.model_task = None
+        self.target_task = None
+        self.fold_task = None
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -446,7 +450,11 @@ def _apply_cli_overrides(
 ) -> None:
     """Apply CLI option overrides to config_handler and print feedback."""
     if models:
-        config_handler.pipeline.models = [m.strip() for m in models.split(",")]
+        try:
+            config_handler.pipeline.models = normalize_model_names(models.split(","))
+        except ValueError as e:
+            console.print(f"\n[bold red]Error:[/bold red] {str(e)}", style="red")
+            raise typer.Exit(code=1)
         console.print(f"[dim]Override: models = {', '.join(config_handler.pipeline.models)}[/dim]")
     if targets:
         config_handler.data_cfg.targets = [t.strip() for t in targets.split(",")]
@@ -972,6 +980,12 @@ def feature_importance(
 
     This command extracts feature importance or coefficients from all outer iterations
     and creates a barplot showing mean values with standard deviation as error bars.
+    Besides the summary CSV, a per-fold CSV with the values of each outer fold (and
+    the intercept for linear models) is written.
+
+    Linear coefficients refer to the preprocessed feature space (standardized
+    continuous features, one-hot encoded categoricals), are averaged over the
+    calibrated sub-models of each fold and precede probability calibration.
 
     For models without native importance (MLP, RBF_SVC, TabPFN), SHAP values are
     computed on test fold data as a fallback.
@@ -986,6 +1000,12 @@ def feature_importance(
     respredai feature-importance --output ./output --model RF --target Target1 --top-n 30
     """
     print_banner()
+
+    try:
+        model = normalize_model_names([model])[0]
+    except ValueError as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}", style="red")
+        raise typer.Exit(code=1)
 
     console.print(
         f"\n[bold cyan]Extracting feature importance for {model} - {target}...[/bold cyan]\n"
@@ -1086,6 +1106,13 @@ def _show_output_paths(
             / f"{model_safe}_feature_importance{suffix}.csv"
         )
         output_messages.append(f"CSV: [cyan]{csv_path}[/cyan]")
+        per_fold_path = (
+            output_folder
+            / DIR_FEATURE_IMPORTANCE
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}_per_fold.csv"
+        )
+        output_messages.append(f"Per-fold CSV: [cyan]{per_fold_path}[/cyan]")
     if not no_plot:
         plot_path = (
             output_folder

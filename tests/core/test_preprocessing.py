@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
+from xgboost import XGBClassifier
+
+from respredai.core.constants import sanitize_feature_names
+from respredai.core.workflow import _apply_ohe_and_clean, _build_ohe_transformer
 
 
 class TestPreprocessingConsistency:
@@ -237,3 +241,28 @@ class TestGroupHandling:
             test_groups = set(groups[test_idx])
             # Groups should not overlap between train and test
             assert len(train_groups & test_groups) == 0
+
+
+class TestFeatureNameSanitizer:
+    """One-hot encoded column names must be accepted by every model, XGBoost included."""
+
+    def test_replaces_every_character_xgboost_rejects(self):
+        assert sanitize_feature_names(["a<b", "c>d", "age[0-10]", "plain"]) == [
+            "a_lt_b",
+            "c_gt_d",
+            "age_lb_0-10_rb_",
+            "plain",
+        ]
+
+    def test_ohe_columns_are_safe_for_xgboost(self):
+        df = pd.DataFrame(
+            {
+                "age_band": ["age[0-10]", "age[10-20]", "age<30", "age[0-10]"] * 5,
+                "x": np.arange(20, dtype=float),
+            }
+        )
+        X = _apply_ohe_and_clean(_build_ohe_transformer(["age_band"]), df)
+        assert not any(ch in col for col in X.columns for ch in "[]<>")
+        y = np.arange(20) % 2
+        # XGBoost raises on forbidden characters in feature names
+        XGBClassifier(n_estimators=2, n_jobs=1).fit(X, y)

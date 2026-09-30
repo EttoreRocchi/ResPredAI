@@ -5,7 +5,6 @@ import os
 from typing import Literal
 
 import numpy as np
-import torch
 from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
@@ -203,6 +202,7 @@ def _create_classifier(
         )
     elif model_name == "TabPFN":
         ensure_tabpfn_available()
+        import torch
         from tabpfn import TabPFNClassifier
         from tabpfn.constants import ModelVersion
 

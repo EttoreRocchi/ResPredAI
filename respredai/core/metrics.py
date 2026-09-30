@@ -522,7 +522,7 @@ def save_metrics_summary(
     else:
         se = std  # fallback: no fold info available
 
-    ci_pct = int(confidence * 100)
+    ci_pct = int(round(confidence * 100))
     summary_df = pd.DataFrame(
         {
             "Metric": df_metrics.columns,

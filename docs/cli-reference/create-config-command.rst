@@ -223,8 +223,9 @@ Use ``respredai list-models`` to see all available models.
 
   - ``auto``: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
   - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold across all concatenated samples
-  - ``cv``: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
-  - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
+  - ``cv``: ``TunedThresholdClassifierCV`` method - scores every candidate threshold on each inner CV fold, averages the fold curves and keeps the threshold that maximizes the averaged objective
+  - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` averages the per-fold objective curves before choosing (fold-wise scoring then aggregation)
+  - With either method the saved fold model is the classifier fit on the whole training fold (with group-aware probability calibration if enabled) and the threshold is stored beside it. With a ``group_column`` the inner splits of the ``cv`` search are group-aware, but the calibrator refit inside that search uses plain stratified folds
 
 - **threshold_objective**: Objective function for threshold optimization
 

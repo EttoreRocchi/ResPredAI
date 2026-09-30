@@ -20,27 +20,56 @@ from respredai.core.constants import (
 )
 
 
+def iter_inner_estimators(model):
+    """Yield every innermost fitted estimator inside calibration wrappers.
+
+    ``CalibratedClassifierCV`` with an integer ``cv`` (the pipeline default)
+    fits one base estimator per calibration split and averages their
+    calibrated probabilities at prediction time. A single fold model can
+    therefore hold several inner estimators, each trained on a different
+    subset of the outer training fold. This walks
+    ``TunedThresholdClassifierCV`` -> ``CalibratedClassifierCV`` -> every
+    calibrated sub-classifier and yields each base estimator, so callers can
+    aggregate coefficients or importances over all of them instead of
+    reporting an arbitrary one.
+
+    Parameters
+    ----------
+    model : sklearn estimator
+        The trained model (possibly wrapped).
+
+    Yields
+    ------
+    sklearn estimator
+        Each innermost estimator exposing ``coef_`` / ``feature_importances_``.
+    """
+    if isinstance(model, TunedThresholdClassifierCV) and hasattr(model, "estimator_"):
+        yield from iter_inner_estimators(model.estimator_)
+        return
+
+    if isinstance(model, CalibratedClassifierCV) and getattr(
+        model, "calibrated_classifiers_", None
+    ):
+        for calibrated in model.calibrated_classifiers_:
+            yield from iter_inner_estimators(calibrated.estimator)
+        return
+
+    yield model
+
+
 def unwrap_calibrated_model(model):
     """
-    Recursively extract underlying estimator from calibration wrappers.
+    Extract the first underlying estimator from calibration wrappers.
 
     Handles nested wrappers when both calibration types are enabled:
     - TunedThresholdClassifierCV (threshold optimization with cv method)
     - CalibratedClassifierCV (probability calibration)
 
-    Returns the innermost model with coef_/feature_importances_.
+    Use this only for structural information shared by every inner estimator
+    (feature names, number of features). For coefficients or importances use
+    :func:`iter_inner_estimators` and aggregate over all inner estimators.
     """
-    # Unwrap TunedThresholdClassifierCV
-    if isinstance(model, TunedThresholdClassifierCV):
-        if hasattr(model, "estimator_"):
-            return unwrap_calibrated_model(model.estimator_)
-
-    # Unwrap CalibratedClassifierCV
-    if isinstance(model, CalibratedClassifierCV):
-        if hasattr(model, "calibrated_classifiers_") and model.calibrated_classifiers_:
-            return unwrap_calibrated_model(model.calibrated_classifiers_[0].estimator)
-
-    return model
+    return next(iter_inner_estimators(model))
 
 
 def has_feature_importance(model, model_name: str) -> bool:
@@ -67,7 +96,13 @@ def get_feature_importance(model, feature_names: list[str], model_name: str) -> 
     Extract native feature importance or coefficients from a model.
 
     Unwraps calibration wrappers (CalibratedClassifierCV, TunedThresholdClassifierCV)
-    to access the underlying model's coefficients/importances.
+    and averages over every inner estimator they hold (one per probability
+    calibration split), so the result describes the whole fold model rather
+    than an arbitrary sub-model.
+
+    Linear coefficients are the raw ``coef_`` of the inner estimators: they
+    refer to the preprocessed feature space (standardized continuous features,
+    one-hot encoded categoricals) and precede any Platt/isotonic calibration.
 
     Parameters
     ----------
@@ -87,20 +122,63 @@ def get_feature_importance(model, feature_names: list[str], model_name: str) -> 
     if model is None:
         return None
 
-    inner_model = unwrap_calibrated_model(model)
+    inner_models = list(iter_inner_estimators(model))
 
     if model_name in TREE_BASED_MODELS:
-        importances = inner_model.feature_importances_
+        importances = np.mean(
+            [np.asarray(m.feature_importances_, dtype=float) for m in inner_models], axis=0
+        )
     elif model_name in LINEAR_MODELS:
-        coef = inner_model.coef_
-        if len(coef.shape) > 1:
-            # For multi-class, average absolute coefficients across classes
-            coef = np.abs(coef).mean(axis=0)
-        importances = coef
+        importances = np.mean([_linear_coef(m) for m in inner_models], axis=0)
     else:
         return None
 
     return pd.Series(importances, index=feature_names)
+
+
+def _linear_coef(estimator) -> np.ndarray:
+    """Return the signed 1-D coefficient vector of a fitted linear estimator.
+
+    Binary classifiers store ``coef_`` with shape ``(1, n_features)``: that
+    single row is the signed class-1 coefficient vector and is returned as is.
+    Only a genuinely multi-class ``coef_`` (more than one row) is reduced to
+    the mean absolute coefficient across classes.
+    """
+    coef = np.asarray(estimator.coef_, dtype=float)
+    if coef.ndim == 1:
+        return coef
+    if coef.shape[0] == 1:
+        return coef[0]
+    return np.abs(coef).mean(axis=0)
+
+
+def _linear_intercept(estimator) -> float:
+    """Return the scalar intercept of a fitted binary linear estimator."""
+    return float(np.ravel(estimator.intercept_).mean())
+
+
+def get_linear_intercept(model, model_name: str) -> Optional[float]:
+    """Extract the intercept of a linear fold model, averaged over inner estimators.
+
+    Like the coefficients, the intercept refers to the preprocessed feature
+    space and precedes probability calibration.
+
+    Parameters
+    ----------
+    model : sklearn estimator
+        The trained model (possibly wrapped).
+    model_name : str
+        Model identifier (e.g. ``"LR"``, ``"RF"``).
+
+    Returns
+    -------
+    float or None
+        Mean intercept over the inner estimators, or ``None`` for non-linear
+        models or when *model* is ``None``.
+    """
+    if model is None or model_name not in LINEAR_MODELS:
+        return None
+    return float(np.mean([_linear_intercept(m) for m in iter_inner_estimators(model)]))
 
 
 def _shap_to_class1(shap_values) -> np.ndarray:
@@ -121,6 +199,19 @@ def _shap_to_class1(shap_values) -> np.ndarray:
         idx = 1 if arr.shape[2] > 1 else 0
         arr = arr[:, :, idx]
     return arr
+
+
+def _tree_shap_values(model, X_df: pd.DataFrame) -> np.ndarray:
+    """Positive-class SHAP values of a tree fold model, averaged over inner estimators.
+
+    A calibrated fold model averages the outputs of its inner estimators, so
+    their per-sample SHAP contributions are averaged the same way.
+    """
+    per_estimator = [
+        _shap_to_class1(shap.TreeExplainer(inner).shap_values(X_df))
+        for inner in iter_inner_estimators(model)
+    ]
+    return np.mean(per_estimator, axis=0)
 
 
 def _importance_type_label(model_name: Optional[str], method: str) -> str:
@@ -179,13 +270,11 @@ def compute_shap_importance(
         return None
 
     try:
-        inner_model = unwrap_calibrated_model(model)
         X_df = pd.DataFrame(X_test, columns=feature_names)
 
         # Tree-based models: use TreeExplainer (fast, exact)
         if model_name in TREE_BASED_MODELS:
-            explainer = shap.TreeExplainer(inner_model)
-            shap_values = _shap_to_class1(explainer.shap_values(X_df))
+            shap_values = _tree_shap_values(model, X_df)
             mean_abs_shap = np.abs(shap_values).mean(axis=0)
             return pd.Series(mean_abs_shap, index=feature_names)
 
@@ -272,14 +361,10 @@ def compute_feature_direction(
     if model is None or X_test is None:
         return None
 
-    inner_model = unwrap_calibrated_model(model)
-
-    # Linear models: use sign of coefficients directly (fast, no extra computation)
+    # Linear models: use sign of coefficients directly (fast, no extra computation),
+    # averaged over the inner estimators of a calibrated fold model
     if model_name in LINEAR_MODELS:
-        coef = inner_model.coef_
-        if len(coef.shape) > 1:
-            # Binary classification: use class-1 coefficients
-            coef = coef[0] if coef.shape[0] == 1 else coef.mean(axis=0)
+        coef = np.mean([_linear_coef(m) for m in iter_inner_estimators(model)], axis=0)
         return pd.Series(coef, index=feature_names)
 
     try:
@@ -289,8 +374,7 @@ def compute_feature_direction(
         # Tree-based models: use TreeExplainer (fast, exact)
         if model_name in TREE_BASED_MODELS:
             try:
-                explainer = shap.TreeExplainer(inner_model)
-                shap_values = _shap_to_class1(explainer.shap_values(X_df))
+                shap_values = _tree_shap_values(model, X_df)
                 return _shap_direction_from_correlation(shap_values, X_arr, feature_names)
             except Exception:
                 pass  # Fall through to KernelExplainer
@@ -463,10 +547,14 @@ def extract_feature_importance_from_models(
     Returns
     -------
     tuple or None
-        ``(importances_df, feature_names, method, directions)``.
-        *directions* is a :class:`pd.Series` mapping feature names to
-        ``"Risk (+)"`` / ``"Protective (-)"`` strings, or ``None`` when
-        *compute_direction_flag* is False.
+        ``(importances_df, feature_names, method, directions, intercepts)``.
+        *importances_df* has one row per successful outer fold, indexed by the
+        1-based fold number (repeats are numbered consecutively), and one
+        column per feature. *directions* is a :class:`pd.Series` mapping
+        feature names to ``"Risk (+)"`` / ``"Protective (-)"`` strings, or
+        ``None`` when *compute_direction_flag* is False. *intercepts* is a
+        :class:`pd.Series` of per-fold intercepts (averaged over the inner
+        estimators of each fold model) for linear models, ``None`` otherwise.
     """
     if not model_path.exists():
         warnings.warn(f"Model file not found: {model_path}")
@@ -506,6 +594,8 @@ def extract_feature_importance_from_models(
         )
 
         importances_list = []
+        fold_numbers = []
+        intercept_list = []
         for fold_idx, model in enumerate(fold_models):
             if model is None:
                 continue
@@ -521,9 +611,20 @@ def extract_feature_importance_from_models(
             importance = get_feature_importance(model, fold_names, model_name)
             if importance is not None:
                 importances_list.append(importance)
+                fold_numbers.append(fold_idx + 1)
+                intercept_list.append(get_linear_intercept(model, model_name))
 
         if importances_list:
-            importances_df = pd.DataFrame(importances_list)
+            # Rows are indexed by the 1-based outer fold number so per-fold
+            # values stay aligned with fold_models even when a failed fold
+            # (None) is skipped.
+            importances_df = pd.DataFrame(importances_list, index=fold_numbers)
+            importances_df.index.name = "Fold"
+            intercepts = (
+                pd.Series(intercept_list, index=importances_df.index, name="Intercept")
+                if model_name in LINEAR_MODELS
+                else None
+            )
             # NaN-skip: average only over folds where the feature is present, so
             # rare one-hot categories that appear in some folds are not diluted.
             mean_importance = importances_df.mean(axis=0)
@@ -549,14 +650,15 @@ def extract_feature_importance_from_models(
                     seed,
                 )
 
-            return importances_df, feature_names, "native", directions
+            return importances_df, feature_names, "native", directions, intercepts
 
     # Fall back to SHAP if native not available
     if use_shap and fold_test_data:
         importances_list = []
+        fold_numbers = []
         feature_names = None
 
-        for model, test_data in zip(fold_models, fold_test_data):
+        for fold_idx, (model, test_data) in enumerate(zip(fold_models, fold_test_data)):
             if model is None or test_data is None:
                 continue
 
@@ -573,9 +675,11 @@ def extract_feature_importance_from_models(
             )
             if shap_importance is not None:
                 importances_list.append(shap_importance)
+                fold_numbers.append(fold_idx + 1)
 
         if importances_list and feature_names:
-            importances_df = pd.DataFrame(importances_list)
+            importances_df = pd.DataFrame(importances_list, index=fold_numbers)
+            importances_df.index.name = "Fold"
             mean_importance = importances_df.mean(axis=0)
             abs_mean_importance = mean_importance.sort_values(ascending=False)
 
@@ -597,7 +701,7 @@ def extract_feature_importance_from_models(
                     seed,
                 )
 
-            return importances_df, feature_names, "shap", directions
+            return importances_df, feature_names, "shap", directions, None
 
     return None
 
@@ -777,6 +881,43 @@ def save_feature_importance_csv(
     summary_df.to_csv(output_path, index=False)
 
 
+def save_feature_importance_per_fold_csv(
+    importances_df: pd.DataFrame,
+    output_path: Path,
+    intercepts: Optional[pd.Series] = None,
+):
+    """
+    Save the per-fold importance values (one row per outer fold).
+
+    The summary CSV only reports the cross-fold mean and std; this file exposes
+    the values behind them so the coefficients of each fold model can be
+    inspected. Columns are ``Fold`` (1-based outer fold number, repeats
+    numbered consecutively), ``Intercept`` (linear models only, same
+    preprocessed feature space and pre-calibration scale as the coefficients)
+    and one column per feature in the same order as the summary CSV.
+
+    Parameters
+    ----------
+    importances_df : pd.DataFrame
+        DataFrame with feature importances (rows=folds, columns=features).
+    output_path : Path
+        Path to save the CSV file.
+    intercepts : pd.Series, optional
+        Per-fold intercepts aligned with ``importances_df.index``.
+    """
+    per_fold = importances_df.copy()
+    if intercepts is not None:
+        per_fold.insert(0, "Intercept", intercepts.reindex(per_fold.index).values)
+    if per_fold.index.name == "Fold":
+        fold_numbers = list(per_fold.index)
+    else:
+        fold_numbers = list(range(1, len(per_fold) + 1))
+    per_fold.insert(0, "Fold", fold_numbers)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    per_fold.to_csv(output_path, index=False)
+
+
 def process_feature_importance(
     output_folder: str,
     model: str,
@@ -791,7 +932,9 @@ def process_feature_importance(
     """
     Process feature importance for a model-target combination.
 
-    Uses native importance if available, falls back to SHAP otherwise.
+    Uses native importance if available, falls back to SHAP otherwise. Writes
+    a summary CSV (mean/std across folds), a per-fold CSV (one row per outer
+    fold, with the intercept for linear models) and a barplot.
 
     Parameters
     ----------
@@ -836,7 +979,7 @@ def process_feature_importance(
         warnings.warn(f"Feature importance not available for {model} - {target}.")
         return None
 
-    importances_df, feature_names, method, directions = result
+    importances_df, feature_names, method, directions, intercepts = result
     importance_type = _importance_type_label(model, method)
 
     model_safe = sanitize_name(model)
@@ -858,6 +1001,13 @@ def process_feature_importance(
             directions=directions,
             importance_type=importance_type,
         )
+        per_fold_path = (
+            Path(output_folder)
+            / DIR_FEATURE_IMPORTANCE
+            / target_safe
+            / f"{model_safe}_feature_importance{suffix}_per_fold.csv"
+        )
+        save_feature_importance_per_fold_csv(importances_df, per_fold_path, intercepts=intercepts)
 
     if save_plot:
         plot_path = (

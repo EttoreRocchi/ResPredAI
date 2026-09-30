@@ -6,6 +6,7 @@ from respredai.visualization.feature_importance import (
     plot_feature_importance,
     process_feature_importance,
     save_feature_importance_csv,
+    save_feature_importance_per_fold_csv,
 )
 from respredai.visualization.html_report import generate_html_report
 
@@ -14,6 +15,7 @@ __all__ = [
     "process_feature_importance",
     "plot_feature_importance",
     "save_feature_importance_csv",
+    "save_feature_importance_per_fold_csv",
     "extract_feature_importance_from_models",
     "generate_html_report",
 ]

@@ -410,7 +410,8 @@ output_folder/
 │   └── reliability_curve_{model}_{target}.png     # Reliability curves per fold + aggregate
 ├── feature_importance/                             # Feature importance (if extracted)
 │   └── {target_name}/
-│       ├── {model_name}_feature_importance.csv    # Importance values
+│       ├── {model_name}_feature_importance.csv    # Importance values (mean/std across folds)
+│       ├── {model_name}_feature_importance_per_fold.csv  # Per-fold values (+ intercept for linear models)
 │       └── {model_name}_feature_importance.png    # Barplot visualization
 ├── subgroup_analysis/                               # Subgroup performance metrics (if configured)
 │   └── {target_name}/

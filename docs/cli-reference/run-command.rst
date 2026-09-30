@@ -108,6 +108,8 @@ Defines the input data and features.
 
   - These features will be scaled using StandardScaler
   - All other features are treated as categorical and one-hot encoded
+  - May be left empty (or omitted) when every feature is categorical
+  - A categorical feature with high cardinality (at least 20 distinct values and more than half as many as rows) triggers a warning, since it is one-hot encoded into one column per level
 
 [Metadata] Section
 ~~~~~~~~~~~~~~~~~~
@@ -168,14 +170,15 @@ Controls the machine learning pipeline configuration.
 
   - Available models: ``LR``, ``MLP``, ``XGB``, ``RF``, ``CatBoost``, ``TabPFN``, ``RBF_SVC``, ``Linear_SVC``, ``KNN``
   - Use ``respredai list-models`` to see all available models with descriptions
+  - Names are case-insensitive (``lr`` selects ``LR``); unknown names are rejected when the configuration is loaded
 
 - ``outer_folds`` - Number of folds for outer cross-validation
 
-  - Used for model evaluation
+  - Used for model evaluation (must be at least 2)
 
 - ``inner_folds`` - Number of folds for inner cross-validation
 
-  - Used for hyperparameter tuning with GridSearchCV
+  - Used for hyperparameter tuning with GridSearchCV (must be at least 2)
 
 - ``calibrate_threshold`` - Enable decision threshold optimization (optional, default: ``false``)
 
@@ -188,8 +191,9 @@ Controls the machine learning pipeline configuration.
 
   - ``auto``: Automatically choose based on sample size (OOF if n < 1000, CV otherwise)
   - ``oof``: Out-of-fold predictions method - aggregates predictions from all CV folds into a single set, then finds one global threshold maximizing Youden's J across all concatenated samples
-  - ``cv``: TunedThresholdClassifierCV method - calculates optimal threshold separately for each CV fold, then aggregates (averages) the fold-specific thresholds
-  - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` finds per-fold thresholds then averages them (fold-wise optimization then aggregation)
+  - ``cv``: ``TunedThresholdClassifierCV`` method - scores every candidate threshold on each inner CV fold, averages the fold curves and keeps the threshold that maximizes the averaged objective
+  - **Key difference**: ``oof`` finds one threshold on all concatenated OOF predictions (global optimization), while ``cv`` averages the per-fold objective curves before choosing (fold-wise scoring then aggregation)
+  - With either method the saved fold model is the classifier fit on the whole training fold (with group-aware probability calibration if enabled) and the threshold is stored beside it. With a ``group_column`` the inner splits of the ``cv`` search are group-aware, but the calibrator refit inside that search uses plain stratified folds
   - Only used when ``calibrate_threshold = true``
 
 - ``outer_cv_repeats`` - Number of repetitions for outer cross-validation (optional, default: ``1``)
@@ -271,6 +275,7 @@ Controls logging behavior.
   - ``0``: No logging to file
   - ``1``: Log major events (model start/end, target completion)
   - ``2``: Verbose logging (includes fold-level details)
+  - Any other value is rejected when the configuration is loaded
 
 - ``log_basename`` - Name of the log file
 
