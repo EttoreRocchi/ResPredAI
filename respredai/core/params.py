@@ -3,19 +3,35 @@
 from typing import Union
 
 import numpy as np
+import sklearn
+
+_SKLEARN_VERSION = tuple(int(part) for part in sklearn.__version__.split(".")[:2])
+
+
+def _lr_param_grid() -> list[dict]:
+    """Logistic-regression grid expressed for the installed scikit-learn.
+
+    scikit-learn 1.8 deprecates ``penalty`` in favour of ``l1_ratio`` (0 is L2,
+    1 is L1, values in between are elastic net) and ``C=np.inf`` for no
+    penalty. Both forms span the same 71 combinations with the ``saga``
+    solver; the newer one avoids deprecation warnings on 1.8+ and keeps
+    working once ``penalty`` is removed.
+    """
+    c_grid = np.logspace(-2, 4, 10)
+    if _SKLEARN_VERSION >= (1, 8):
+        return [
+            {"C": [np.inf]},
+            {"l1_ratio": [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0], "C": c_grid},
+        ]
+    return [
+        {"penalty": [None]},
+        {"penalty": ["l1", "l2"], "C": c_grid},
+        {"penalty": ["elasticnet"], "C": c_grid, "l1_ratio": [0.1, 0.3, 0.5, 0.7, 0.9]},
+    ]
+
 
 PARAM_GRID: dict[str, Union[dict, list[dict]]] = {
-    "LR": [
-        {
-            "penalty": [None],
-        },
-        {"penalty": ["l1", "l2"], "C": np.logspace(-2, 4, 10)},
-        {
-            "penalty": ["elasticnet"],
-            "C": np.logspace(-2, 4, 10),
-            "l1_ratio": [0.1, 0.3, 0.5, 0.7, 0.9],
-        },
-    ],
+    "LR": _lr_param_grid(),
     "MLP": {
         "hidden_layer_sizes": [
             (64, 32, 16),

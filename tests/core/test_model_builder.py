@@ -295,3 +295,43 @@ class TestPipelineIntegration:
         proba = grid.predict_proba(X_scaled)
         assert proba.shape == (100, 2)
         assert np.allclose(proba.sum(axis=1), 1.0)
+
+
+class TestLogisticRegressionGrid:
+    """The LR grid must span the same search space and stay deprecation-free."""
+
+    def test_grid_has_71_combinations(self):
+        from sklearn.model_selection import ParameterGrid
+
+        from respredai.core.params import PARAM_GRID
+
+        assert len(ParameterGrid(PARAM_GRID["LR"])) == 71
+
+    def test_fitting_grid_points_raises_no_deprecation_warning(self):
+        import warnings
+
+        from sklearn.base import clone
+        from sklearn.exceptions import ConvergenceWarning
+        from sklearn.model_selection import ParameterGrid
+
+        from respredai.core.model_builder import _create_classifier
+        from respredai.core.params import PARAM_GRID
+
+        rng = np.random.RandomState(0)
+        X = rng.randn(60, 3)
+        y = (X[:, 0] + rng.randn(60) * 0.5 > 0).astype(int)
+        base = _create_classifier("LR", rnd_state=0)
+        grid = list(ParameterGrid(PARAM_GRID["LR"]))
+        # one point per penalty family: none, and the extremes and middle of l1_ratio
+        sample = [grid[0], grid[1], grid[len(grid) // 2], grid[-1]]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            for params in sample:
+                clone(base).set_params(**params).fit(X, y)
+        offending = [
+            str(w.message)
+            for w in caught
+            if issubclass(w.category, FutureWarning) or "Inconsistent values" in str(w.message)
+        ]
+        assert not offending, offending

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `extract_feature_importance_from_models()` also returns the per-fold intercepts
+- Logistic-regression hyperparameter grid expressed with `l1_ratio` on scikit-learn 1.8 or newer (same 71 combinations), avoiding the deprecation of `penalty` and its removal planned for 1.10
 - Model names are case-insensitive and normalised to their canonical spelling (`lr` selects `LR`), duplicates are dropped; applies to `[Pipeline] models`, `run --models`, `train --models` and `feature-importance --model`
 - `continuous_features` may be empty or omitted when every feature is categorical
 - With imputation disabled, the missing-value check covers the feature columns only and names the offending columns; subgroup columns may contain missing values, which are reported as `Unknown`

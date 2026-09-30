@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -27,9 +28,20 @@ class TestTorchIsOptional:
     """torch arrives with the tabpfn extra only; the base package must not need it."""
 
     def test_package_imports_without_torch(self):
-        code = (
-            "import sys; sys.modules['torch'] = None; "
-            "import respredai, respredai.cli, respredai.core.model_builder"
+        code = textwrap.dedent(
+            """
+            import importlib.abc
+            import sys
+
+            class BlockTorch(importlib.abc.MetaPathFinder):
+                def find_spec(self, name, path=None, target=None):
+                    if name == "torch" or name.startswith("torch."):
+                        raise ModuleNotFoundError(f"No module named {name!r}")
+                    return None
+
+            sys.meta_path.insert(0, BlockTorch())
+            import respredai, respredai.cli, respredai.core.model_builder
+            """
         )
         result = subprocess.run(
             [sys.executable, "-c", code], capture_output=True, text=True, check=False

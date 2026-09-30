@@ -166,7 +166,6 @@ def _create_classifier(
             max_iter=5000,
             random_state=rnd_state,
             class_weight="balanced",
-            n_jobs=1,
         )
     elif model_name == "XGB":
         return XGBClassifier(
